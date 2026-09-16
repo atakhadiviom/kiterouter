@@ -71,17 +71,175 @@ async def dashboard():
 
 @app.get("/v1/models")
 async def list_models():
-    models = [
-        {"id": "claude-3-5-sonnet", "object": "model", "owned_by": "anthropic"},
-        {"id": "claude-3-7-sonnet", "object": "model", "owned_by": "anthropic"},
-        {"id": "gpt-4o", "object": "model", "owned_by": "openai"},
-        {"id": "gpt-4o-mini", "object": "model", "owned_by": "openai"},
-        {"id": "deepseek-coder", "object": "model", "owned_by": "deepseek"},
-        {"id": "deepseek-r1", "object": "model", "owned_by": "deepseek"},
-        {"id": "gemini-2.0-flash", "object": "model", "owned_by": "google"},
-        {"id": "gemini-1.5-pro", "object": "model", "owned_by": "google"},
-    ]
-    return {"object": "list", "data": models}
+    return {"object": "list", "data": router.get_all_models()}
+
+
+@app.get("/api/config")
+async def get_config():
+    """Return provider configurations with masked keys."""
+    masked_providers = {}
+    for p_name, p_data in config.providers.items():
+        masked_item = dict(p_data)
+        for secret_field in ("token", "api_key"):
+            if secret_field in masked_item and masked_item[secret_field]:
+                raw = masked_item[secret_field]
+                masked_item[secret_field] = f"...{raw[-4:]}" if len(raw) > 4 else "******"
+        masked_providers[p_name] = masked_item
+
+    available = await router.get_available_providers()
+    return {
+        "port": config.port,
+        "enable_rtk": config.enable_rtk,
+        "providers": masked_providers,
+        "available_providers": available,
+    }
+
+
+class UpdateConfigRequest(BaseModel):
+    providers: Dict[str, Any]
+    enable_rtk: Optional[bool] = None
+
+
+@app.post("/api/config")
+async def update_config(req: UpdateConfigRequest):
+    """Update and persist provider configuration."""
+    global router
+    for p_name, p_updates in req.providers.items():
+        if p_name not in config.providers:
+            config.providers[p_name] = {}
+        for k, v in p_updates.items():
+            # Don't overwrite if it was submitted as masked placeholder
+            if isinstance(v, str) and (v.startswith("...") or v == "******"):
+                continue
+            config.providers[p_name][k] = v
+
+    if req.enable_rtk is not None:
+        config.enable_rtk = req.enable_rtk
+
+    config.save()
+    # Re-initialize router with updated config
+    router = ProviderRouter(config=config.providers)
+    available = await router.get_available_providers()
+    return {"status": "saved", "available_providers": available}
+
+
+class TestProviderRequest(BaseModel):
+    provider: str
+    model: Optional[str] = None
+
+
+class FetchModelsRequest(BaseModel):
+    provider: str
+
+
+class FetchTokenRequest(BaseModel):
+    provider: Optional[str] = None  # None means all discoverable
+
+
+@app.post("/api/fetch-token")
+async def fetch_token_endpoint(req: FetchTokenRequest):
+    """Auto-import tokens and credentials from local IDEs, CLIs, and OmniRoute."""
+    from kiterouter.token_fetcher import TokenFetcher
+
+    if req.provider:
+        creds = TokenFetcher.fetch_for_provider(req.provider)
+        if not creds:
+            return JSONResponse(
+                {"status": "error", "message": f"No local credentials found for {req.provider}"},
+                status_code=404,
+            )
+        # Update config in memory and save
+        p_name = req.provider.lower().replace("-", "_")
+        if p_name not in config.providers:
+            config.providers[p_name] = {}
+        for k, v in creds.items():
+            config.providers[p_name][k] = v
+        config.save()
+        global router
+        router = ProviderRouter(config=config.providers)
+        return {
+            "status": "success",
+            "provider": req.provider,
+            "source": creds.get("source", "local"),
+            "email": creds.get("email"),
+            "has_token": bool(creds.get("token")),
+            "has_api_key": bool(creds.get("api_key")),
+        }
+    else:
+        # Import all found
+        found = TokenFetcher.fetch_all()
+        imported = []
+        for p_name, creds in found.items():
+            if p_name not in config.providers:
+                config.providers[p_name] = {}
+            for k, v in creds.items():
+                config.providers[p_name][k] = v
+            imported.append(p_name)
+        config.save()
+        router = ProviderRouter(config=config.providers)
+        return {
+            "status": "success",
+            "imported_count": len(imported),
+            "imported_providers": imported,
+        }
+
+
+@app.post("/api/fetch-models")
+async def fetch_models(req: FetchModelsRequest):
+    """Dynamically fetch and refresh available models for a provider."""
+    target_provider = router.providers.get(req.provider)
+    if not target_provider:
+        return JSONResponse(
+            {"status": "error", "message": f"Unknown provider {req.provider}"},
+            status_code=400,
+        )
+
+    try:
+        models = await target_provider.fetch_models()
+        return {
+            "status": "success",
+            "provider": req.provider,
+            "count": len(models),
+            "models": models,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "provider": req.provider,
+            "error": str(e),
+            "models": target_provider.get_models(),
+        }
+
+
+@app.post("/api/test-provider")
+async def test_provider(req: TestProviderRequest):
+    """Test a provider with a fast greeting completion."""
+    target_provider = router.providers.get(req.provider)
+    if not target_provider:
+        return JSONResponse({"status": "error", "message": f"Unknown provider {req.provider}"}, status_code=400)
+
+    test_model = req.model or (target_provider.supported_models[0] if target_provider.supported_models else "default")
+    start = time.time()
+    try:
+        res = await target_provider.chat_complete(
+            model=test_model,
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=10,
+        )
+        latency = round((time.time() - start) * 1000)
+        content = res.get("choices", [{}])[0].get("message", {}).get("content", "")
+        return {
+            "status": "success",
+            "latency_ms": latency,
+            "response": content[:150] or "[Empty response received]",
+        }
+    except Exception as e:
+        latency = round((time.time() - start) * 1000)
+        return {
+            "status": "failed",
+            "latency_ms": latency,
+            "error": str(e),
+        }
 
 
 @app.post("/v1/chat/completions")

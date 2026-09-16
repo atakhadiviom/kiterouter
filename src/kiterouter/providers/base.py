@@ -47,6 +47,14 @@ class BaseProvider(ABC):
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
 
+    def get_models(self) -> List[str]:
+        """Return list of supported models for this provider."""
+        return self.supported_models.copy()
+
+    async def fetch_models(self) -> List[str]:
+        """Fetch models dynamically from upstream provider if supported."""
+        return self.get_models()
+
     @abstractmethod
     async def is_available(self) -> bool:
         """Check if provider is configured and reachable."""

@@ -1,39 +1,42 @@
-"""OpenCode Free: Zero-auth public provider."""
+"""Custom OpenAI-compatible provider."""
 from __future__ import annotations
 
-import json
+import os
 from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from kiterouter.providers.base import BaseProvider, create_sse_chunk
 
 
-class OpenCodeFreeProvider(BaseProvider):
-    name = "opencode_free"
-    is_free = True
+class CustomProvider(BaseProvider):
+    name = "custom"
+    is_free = False
     supported_models = [
-        "muse-spark-1.3-contributor-free",
-        "muse-spark-1.2-contributor-free",
-        "nemotron-3-ultra-free",
-        "nemotron-3.5-lightning-free",
-        "mimo-v2.5-free",
-        "ling-3.0-flash-fin-free",
-        "deepseek-v4-flash-free",
-        "claude-3-5-sonnet",
-        "gpt-4o",
+        "custom/default",
     ]
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
-        self.endpoint = self.config.get(
-            "endpoint", "https://opencode.ai/zen/v1/chat/completions"
+        self.api_key = (
+            self.config.get("api_key")
+            or os.environ.get("CUSTOM_API_KEY")
+        )
+        self.endpoint = (
+            self.config.get("endpoint")
+            or os.environ.get("CUSTOM_BASE_URL", "https://api.openai.com/v1/chat/completions")
         )
         self.mock_mode = self.config.get("mock", False)
 
     async def fetch_models(self) -> List[str]:
-        """Fetch real-time live models from OpenCode catalog."""
+        if not self.endpoint:
+            return self.get_models()
+        # Derive /v1/models from /v1/chat/completions
+        base_models_url = self.endpoint.replace("/chat/completions", "/models")
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                res = await client.get("https://opencode.ai/zen/v1/models")
+                res = await client.get(base_models_url, headers=headers)
                 if res.status_code == 200:
                     data = res.json()
                     models = [m.get("id") for m in data.get("data", []) if m.get("id")]
@@ -45,7 +48,7 @@ class OpenCodeFreeProvider(BaseProvider):
         return self.get_models()
 
     async def is_available(self) -> bool:
-        return True
+        return bool((self.api_key and self.endpoint) or self.mock_mode)
 
     async def stream_chat(
         self,
@@ -55,20 +58,21 @@ class OpenCodeFreeProvider(BaseProvider):
         max_tokens: Optional[int] = None,
         **kwargs: Any,
     ) -> AsyncGenerator[str, None]:
+        clean_model = model.replace("custom/", "")
         if self.mock_mode:
-            yield create_sse_chunk(
-                f"[OpenCode Free Mock Response from {model}]", model=model
-            )
+            yield create_sse_chunk(f"[Custom Provider Mock Response for {clean_model}]", model=model)
             yield create_sse_chunk(finish_reason="stop", model=model)
             yield "data: [DONE]\n\n"
             return
 
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "KiteRouter/0.1.0",
         }
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
         payload = {
-            "model": model,
+            "model": clean_model,
             "messages": messages,
             "temperature": temperature,
             "stream": True,
@@ -78,14 +82,9 @@ class OpenCodeFreeProvider(BaseProvider):
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                async with client.stream(
-                    "POST", self.endpoint, headers=headers, json=payload
-                ) as resp:
+                async with client.stream("POST", self.endpoint, headers=headers, json=payload) as resp:
                     if resp.status_code != 200:
-                        yield create_sse_chunk(
-                            f"OpenCode Free Error: HTTP {resp.status_code}",
-                            model=model,
-                        )
+                        yield create_sse_chunk(f"Custom HTTP {resp.status_code}", model=model)
                         yield "data: [DONE]\n\n"
                         return
 
@@ -93,9 +92,6 @@ class OpenCodeFreeProvider(BaseProvider):
                         if line:
                             yield f"{line}\n\n"
         except Exception as e:
-            # Fallback message
-            yield create_sse_chunk(
-                f"[OpenCode Free connection notice: {e}]", model=model
-            )
+            yield create_sse_chunk(f"[Custom notice: {e}]", model=model)
             yield create_sse_chunk(finish_reason="stop", model=model)
             yield "data: [DONE]\n\n"
