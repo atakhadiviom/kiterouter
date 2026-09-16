@@ -73,3 +73,20 @@ class KiteConfig:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(asdict(self), f, indent=2)
+
+    def update_provider_tokens(self, provider: str, updates: Dict[str, Any]) -> None:
+        """Update tokens/credentials for a provider and persist to disk."""
+        if provider in self.providers and isinstance(self.providers[provider], dict):
+            self.providers[provider].update(updates)
+        else:
+            self.providers[provider] = updates
+        self.save()
+
+
+def persist_provider_tokens(provider: str, updates: Dict[str, Any]) -> None:
+    """Safely update and persist provider tokens in ~/.kiterouter/config.json."""
+    try:
+        cfg = KiteConfig.load()
+        cfg.update_provider_tokens(provider, updates)
+    except Exception:
+        pass

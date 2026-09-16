@@ -93,8 +93,13 @@ class BaseProvider(ABC):
                 try:
                     payload = json.loads(chunk[6:].strip())
                     delta = payload.get("choices", [{}])[0].get("delta", {})
-                    if "content" in delta and delta["content"]:
-                        full_content.append(delta["content"])
+                    text_delta = (
+                        delta.get("content")
+                        or delta.get("reasoning_content")
+                        or delta.get("reasoning")
+                    )
+                    if text_delta:
+                        full_content.append(text_delta)
                 except Exception:
                     continue
 

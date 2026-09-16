@@ -445,7 +445,7 @@ async def test_provider(req: TestProviderRequest):
         res = await target_provider.chat_complete(
             model=test_model,
             messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=10,
+            max_tokens=60,
         )
         latency = round((time.time() - start) * 1000)
         content = res.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -487,7 +487,7 @@ async def test_model_endpoint(req: TestModelRequest):
         res = await target_provider.chat_complete(
             model=req.model,
             messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=10,
+            max_tokens=60,
         )
         latency = round((time.time() - start) * 1000)
         content = res.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -559,7 +559,7 @@ async def test_all_models_endpoint(req: Optional[TestAllModelsRequest] = None):
                 res = await provider.chat_complete(
                     model=m,
                     messages=[{"role": "user", "content": "Hi"}],
-                    max_tokens=10,
+                    max_tokens=60,
                 )
                 latency = round((time.time() - start) * 1000)
                 content = res.get("choices", [{}])[0].get("message", {}).get("content", "")

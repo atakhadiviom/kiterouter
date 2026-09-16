@@ -33,7 +33,7 @@ KiteRouter's port is hard-locked to **3001** in the code so it can never collide
 
 ## Providers
 
-Built-in adapters: `cursor` (uses `agent.v1.AgentService/Run` Connect-RPC over HTTP/2, auto-discovers agent host via `GetServerConfig`, CLI-impersonation to avoid outdated-version errors), `antigravity`, `opencode_free`, `opencode_go`, `cline`, `claude`, `codex`, `glm`, `minimax`, `kiro`, `copilot`, `vertex`, `custom`, `command_code`. Additional providers arrive via import from OmniRoute/9Router and render automatically in the dashboard.
+Built-in adapters: `cursor` (uses `agent.v1.AgentService/Run` Connect-RPC over HTTP/2, auto-discovers agent host via `GetServerConfig`, CLI-impersonation to avoid outdated-version errors), `antigravity` (auto Google OAuth refresh, Cloud Code Assist format, honest GCP quota reporting), `opencode_free` (public zero-auth with `Bearer public` and desktop headers, dynamic catalog), `opencode_go` (OpenCode Go subscription routing over `zen/go/v1` with reasoning streaming), `cline` (dual routing to official Cline API or OpenRouter with token refresh), `claude`, `codex`, `glm`, `minimax`, `kiro`, `copilot`, `vertex`, `custom`, `command_code`. Additional providers arrive via import from OmniRoute/9Router and render automatically in the dashboard.
 
 Prefix routing: send `"model": "<provider>/<model-id>"` (aliases, e.g. `cx/…` codex, `cmd/…` command_code, `cc/…` claude, `gh/…` copilot, `kr/…` kiro).
 
