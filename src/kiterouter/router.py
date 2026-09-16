@@ -19,6 +19,7 @@ from kiterouter.providers.claude import ClaudeProvider
 from kiterouter.providers.copilot import CopilotProvider
 from kiterouter.providers.vertex import VertexProvider
 from kiterouter.providers.custom import CustomProvider
+from kiterouter.providers.node import NodeProvider
 
 logger = logging.getLogger("kiterouter.router")
 
@@ -55,30 +56,103 @@ class ProviderRouter:
             "vertex": VertexProvider(self.config.get("vertex")),
             "custom": CustomProvider(self.config.get("custom")),
         }
-        # Dynamically register any imported/custom configured providers
-        known_endpoints = {
-            "groq": ("https://api.groq.com/openai/v1/chat/completions", ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b"]),
-            "openrouter": ("https://openrouter.ai/api/v1/chat/completions", ["anthropic/claude-3.5-sonnet", "openai/gpt-4o"]),
-            "deepseek": ("https://api.deepseek.com/v1/chat/completions", ["deepseek-chat", "deepseek-reasoner"]),
-            "opencode": ("https://api.opencode.ai/v1/chat/completions", ["claude-3-5-sonnet", "gpt-4o"]),
+        # Default aliases. A provider node can add its own prefix below.
+        self.prefix_map: Dict[str, str] = {
+            "cu": "cursor",
+            "cursor": "cursor",
+            "ag": "antigravity",
+            "antigravity": "antigravity",
+            "cc": "claude",
+            "claude": "claude",
+            "cx": "codex",
+            "codex": "codex",
+            "cmd": "command_code",
+            "ccp": "command_code",
+            "command-code": "command_code",
+            "command_code": "command_code",
+            "gh": "copilot",
+            "copilot": "copilot",
+            "kr": "kiro",
+            "kiro": "kiro",
+            "glm": "glm",
+            "minimax": "minimax",
+            "vertex": "vertex",
+            "oc": "opencode_free",
+            "opencode_free": "opencode_free",
+            "opencode_go": "opencode_go",
+            "cline": "cline",
+            "custom": "custom",
         }
+
+        # Seed defaults for well-known OpenAI-compatible providers. These are
+        # starting points, not the definition: every field stays overridable from
+        # config, which is what lets a changed path or model id be fixed from the
+        # dashboard instead of a code release.
+        known_nodes = {
+            "groq": {
+                "base_url": "https://api.groq.com/openai/v1",
+                "models": ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b"],
+            },
+            "openrouter": {
+                "base_url": "https://openrouter.ai/api/v1",
+                "models": ["anthropic/claude-3.5-sonnet", "openai/gpt-4o"],
+            },
+            "deepseek": {
+                "base_url": "https://api.deepseek.com/v1",
+                "models": ["deepseek-chat", "deepseek-reasoner"],
+            },
+            "opencode": {
+                "base_url": "https://api.opencode.ai/v1",
+                "models": ["claude-3-5-sonnet", "gpt-4o"],
+            },
+        }
+
+        # Dynamically register any imported/custom/noded configured providers
         for p_name, p_conf in self.config.items():
-            if p_name not in self.providers and isinstance(p_conf, dict):
-                ep = p_conf.get("endpoint")
-                models = p_conf.get("models")
-                if not ep and p_name in known_endpoints:
-                    ep = known_endpoints[p_name][0]
-                    if not models:
-                        models = known_endpoints[p_name][1]
-                custom_p = CustomProvider({
-                    "endpoint": ep or "https://api.openai.com/v1/chat/completions",
-                    "api_key": p_conf.get("api_key") or p_conf.get("token") or "",
-                    **p_conf
-                })
-                custom_p.name = p_name
-                if models:
-                    custom_p.supported_models = [f"{p_name}/{m}" if not m.startswith(f"{p_name}/") else m for m in models]
-                self.providers[p_name] = custom_p
+            if p_name in self.providers or not isinstance(p_conf, dict):
+                continue
+
+            seed = known_nodes.get(p_name, {})
+            merged = {**seed, **p_conf}
+
+            if str(p_conf.get("kind") or "").lower() == "node":
+                self.providers[p_name] = NodeProvider(p_name, merged)
+                prefix = p_conf.get("prefix")
+                if prefix:
+                    key = str(prefix).lower()
+                    existing = self.prefix_map.get(key)
+                    if existing and existing != p_name:
+                        # Refuse to shadow a built-in alias: that would silently
+                        # reroute an existing provider. The API rejects this on
+                        # save; this is the belt-and-braces path.
+                        logger.warning(
+                            "Node %s wants prefix %r which already routes to %s; keeping %s",
+                            p_name,
+                            key,
+                            existing,
+                            existing,
+                        )
+                    else:
+                        self.prefix_map[key] = p_name
+                continue
+
+            endpoint = merged.get("endpoint")
+            models = merged.get("models")
+            if not endpoint and merged.get("base_url"):
+                endpoint = f"{str(merged['base_url']).rstrip('/')}/chat/completions"
+            custom_p = CustomProvider(
+                {
+                    "endpoint": endpoint or "https://api.openai.com/v1/chat/completions",
+                    "api_key": merged.get("api_key") or merged.get("token") or "",
+                    **merged,
+                }
+            )
+            custom_p.name = p_name
+            if models:
+                custom_p.supported_models = [
+                    f"{p_name}/{m}" if not m.startswith(f"{p_name}/") else m for m in models
+                ]
+            self.providers[p_name] = custom_p
 
         # 3-Tier fallback hierarchy (Subscription -> Cheap -> Free)
         self.fallback_chain = [
@@ -249,33 +323,9 @@ class ProviderRouter:
           'kr/claude-sonnet-4.5' -> ('kiro', 'kr/claude-sonnet-4.5')
           'glm/glm-5.1' -> ('glm', 'glm/glm-5.1')
           'cx/gpt-5.4' -> ('codex', 'cx/gpt-5.4')
+          'ds/deepseek-chat' -> ('deepseek', 'deepseek-chat')   # node prefix
         """
-        prefix_map = {
-            "cu": "cursor",
-            "cursor": "cursor",
-            "ag": "antigravity",
-            "antigravity": "antigravity",
-            "cc": "claude",
-            "claude": "claude",
-            "cx": "codex",
-            "codex": "codex",
-            "cmd": "command_code",
-            "ccp": "command_code",
-            "command-code": "command_code",
-            "command_code": "command_code",
-            "gh": "copilot",
-            "copilot": "copilot",
-            "kr": "kiro",
-            "kiro": "kiro",
-            "glm": "glm",
-            "minimax": "minimax",
-            "vertex": "vertex",
-            "oc": "opencode_free",
-            "opencode_free": "opencode_free",
-            "opencode_go": "opencode_go",
-            "cline": "cline",
-            "custom": "custom",
-        }
+        prefix_map = self.prefix_map
 
         if "/" in raw_model:
             prefix, rest = raw_model.split("/", 1)
