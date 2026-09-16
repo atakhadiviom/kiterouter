@@ -2,13 +2,15 @@
 
 Zero build — one static file (`src/kiterouter/static/dashboard.html`) served at `/dashboard`. No npm, no bundler; changes go live on reload.
 
-## Icon rail (navigation)
+## Feature rail (navigation)
 
-The left rail is **icon-only** and carries every feature KiteRouter intends to have, not just the ones that work today. It mirrors the page set of OmniRoute 3.8.50 (55 pages) plus KiteRouter's own `overview` and `connect` — **57 entries**, grouped by area with dividers between groups.
+The left rail carries every feature KiteRouter intends to have, not just the ones that work today. It mirrors the page set of OmniRoute 3.8.50 (55 pages) plus KiteRouter's own `overview` and `connect` — **57 entries**, grouped by area, with a collapsible **icon + label** layout: it is expanded by default and collapses to icons only.
 
-- Hover (or keyboard-focus) any icon for a tooltip showing the feature name, its group, and `planned` when it is not built yet.
+- **Collapse toggle** — the round button on the rail's right edge switches between labels and icons only. The choice is remembered per browser (`localStorage`), and `aria-expanded` tracks it.
+- Labels are hidden while collapsed, so **tooltips appear only when collapsed** (with labels visible they would be noise). Hover or keyboard-focus for the feature name, its group, and `planned` when it is not built yet.
 - **Green dot** = implemented. **Amber dot** = planned only. The rail never implies a feature exists when it does not.
-- The rail is **generated from a single `FEATURES` registry** in the dashboard script — adding a feature is one entry, and the rail, tooltips, page title and stub panel all follow from it. There is deliberately no hand-written button list to drift out of sync.
+- The rail is **generated from a single `FEATURES` registry** in the dashboard script — adding a feature is one entry, and the rail, labels, group headers, tooltips, page title and stub panel all follow from it. There is deliberately no hand-written button list to drift out of sync.
+- Labels cost width but **no vertical space**, which is what a 57-entry rail needs — it already scrolls. Collapsing trades discoverability back for ~170px of content width.
 
 ### Opening a planned feature
 
@@ -33,7 +35,7 @@ Auto-Combo, Routing, Conductor, Resilience, Limits, Quota, Endpoint, API Endpoin
 
 The order they get built in, the reasons, and the one open question (whether to add a local SQLite store for history) are recorded in the plan at `~/.commandcode/plans/kiterouter-omniroute-parity-nav.md`.
 
-`tests/test_dashboard_nav.py` guards the rail and registry offline: entry count, unique ids, required fields, live entries having a real section, planned entries *not* having one, every planned feature documenting itself, coverage of every OmniRoute page, and every icon name being one validated against lucide.
+`tests/test_dashboard_nav.py` guards the rail and registry offline: entry count, unique ids, required fields, live entries having a real section, planned entries *not* having one, every planned feature documenting itself, coverage of every OmniRoute page, the collapse toggle and its remembered state, labels and group headers being registry-driven, and every icon name being one validated against lucide.
 
 ## Header Features
 - **Online Radar**: Real-time periodic latency ping to `127.0.0.1:3001` with status indicator.

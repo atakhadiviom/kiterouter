@@ -22,7 +22,7 @@ KiteRouter's port is hard-locked to **3001** in the code so it can never collide
 | `/v1/chat/completions` | POST | OpenAI-compatible completions (prefix-routed, e.g. `cursor/claude-3-5-sonnet` or combos e.g. `combo/Own`) |
 | `/v1/messages` | POST | Anthropic-compatible messages |
 | `/v1/models`, `/api/v1/models` | GET | All models from all configured providers + combos |
-| `/dashboard` | GET | Zero-build dashboard (icon-only feature rail, Provider Topology, Recent Requests, Providers, Combos, Playground) |
+| `/dashboard` | GET | Zero-build dashboard (collapsible feature rail, Provider Topology, Recent Requests, Providers, Combos, Playground) |
 | `/api/config` | GET/POST | Read (secrets redacted) / save configuration |
 | `/api/combos` | GET/POST | List and create multi-model routing combos |
 | `/api/combos/{name}` | PUT/DELETE | Update or delete a model combo |
@@ -75,9 +75,9 @@ Clicking any row in the Recent Requests table opens a comprehensive Request Insp
 - Upstream error diagnostics
 - One-click **Copy as cURL** command to replay requests in the terminal
 
-## Feature rail (icon-only)
+## Feature rail
 
-The dashboard's left rail is **icon-only** and gives every intended capability a home — 57 entries mirroring OmniRoute's dashboard page set, generated from a single `FEATURES` registry. Hover for a tooltip; a **green dot** means implemented and an **amber dot** means planned. Clicking a planned entry opens a plan + status panel describing what it will do, the upstream behaviour it is based on, and its definition of done — the UI never presents an unbuilt feature as working. See the [Dashboard wiki page](https://github.com/atakhadiviom/kiterouter/wiki/Dashboard).
+The dashboard's left rail gives every intended capability a home — 57 entries mirroring OmniRoute's dashboard page set, generated from a single `FEATURES` registry. It shows **icon + label** by default and collapses to icons only via the toggle on its edge, remembering the choice. A **green dot** means implemented and an **amber dot** means planned. Clicking a planned entry opens a plan + status panel describing what it will do, the upstream behaviour it is based on, and its definition of done — the UI never presents an unbuilt feature as working. See the [Dashboard wiki page](https://github.com/atakhadiviom/kiterouter/wiki/Dashboard).
 
 ## Import policy (only what works)
 

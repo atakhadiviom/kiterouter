@@ -42,6 +42,7 @@ LUCIDE_ICONS = {
     "layout-dashboard", "link", "list-checks", "list-ordered", "loader",
     "loader-2", "memory-stick", "messages-square", "monitor", "network",
     "pie-chart", "play", "play-circle", "plug", "plug-zap", "plus", "puzzle",
+    "panel-left-close", "panel-left-open",
     "radar", "refresh-cw", "repeat", "route", "save", "scroll-text", "search",
     "search-code", "server", "server-cog", "settings", "share-2", "shield-check",
     "sparkles", "square-terminal", "telescope", "terminal", "trash-2",
@@ -158,6 +159,51 @@ def test_rail_is_generated_from_the_registry(html):
 
 def test_tooltip_layer_exists(html):
     assert 'id="rail-tooltip"' in html
+
+
+# ── collapsible rail ──────────────────────────────────────────────────────────
+
+def test_rail_has_a_collapse_toggle(html):
+    assert 'id="rail-toggle"' in html
+    assert 'aria-controls="nav-rail"' in html
+    assert "toggleRail()" in html
+
+
+def test_rail_ships_expanded(html):
+    """The rail defaults to icon + label; collapsing is opt-in per browser."""
+    toggle = html[html.index('id="rail-toggle"'):]
+    toggle = toggle[: toggle.index("</button>")]
+    assert 'aria-expanded="true"' in toggle
+    assert 'data-lucide="panel-left-close"' in toggle, "expanded rail should offer a collapse icon"
+
+
+def test_collapsed_state_is_css_driven(html):
+    style = html[html.index("<style>"): html.index("</style>")]
+    assert "#app-rail.rail-collapsed" in style, "collapsed rail needs its own width"
+    assert ".rail-label" in style and "display: none" in style, (
+        "collapsing must hide the labels"
+    )
+    assert "#app-rail { width:" in style, "expanded width must be declared"
+
+
+def test_labels_and_group_headers_are_rendered_from_the_registry(html):
+    """Icon+label rendering must stay driven by FEATURES, not hand-written."""
+    assert 'class="rail-label' in html, "feature labels are not rendered"
+    assert 'class="rail-group' in html, "group headers are not rendered"
+    assert "${f.label}" in html, "labels must come from the registry"
+    assert "${f.group}" in html, "group headers must come from the registry"
+
+
+def test_collapse_state_is_remembered(html):
+    assert "localStorage" in html and "RAIL_STORAGE_KEY" in html
+    assert "storedRailCollapsed" in html, "the stored preference is never read back"
+
+
+def test_tooltips_are_suppressed_while_expanded(html):
+    """With labels visible a tooltip is noise, so it is gated on the collapsed state."""
+    tip_fn = html[html.index("function initRailTooltips"):]
+    tip_fn = tip_fn[: tip_fn.index("const hide")]
+    assert "railIsCollapsed()" in tip_fn
 
 
 def test_all_icons_are_valid_lucide_names(html):

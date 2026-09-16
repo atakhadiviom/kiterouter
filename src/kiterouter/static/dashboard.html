@@ -30,37 +30,69 @@
     .tab-btn.active { background-color: #27272a; color: #ffffff; font-weight: 600; }
     .rail-btn { position: relative; }
     .rail-btn.active { background-color: #27272a; color: #ffffff; }
-    .rail-dot { position: absolute; top: 5px; right: 5px; width: 5px; height: 5px; border-radius: 9999px; }
-    .rail-sep { height: 1px; background: #27272a; margin: 6px 14px; }
+    .rail-dot { width: 6px; height: 6px; border-radius: 9999px; flex-shrink: 0; }
+    .rail-sep { height: 1px; background: #27272a; margin: 6px 12px; }
     #nav-rail { scrollbar-width: none; }
     #nav-rail::-webkit-scrollbar { width: 0; display: none; }
+
+    /* Collapsible rail: icon + label when expanded, icons only when collapsed.
+       Labels cost width but no vertical space, which is what the 57-entry rail
+       needs — it already scrolls. */
+    #app-rail { width: 224px; transition: width .15s ease; }
+    #app-rail.rail-collapsed { width: 56px; }
+    #app-rail.rail-collapsed .rail-label,
+    #app-rail.rail-collapsed .rail-group { display: none; }
+    #app-rail.rail-collapsed .rail-item {
+      width: 40px;
+      margin-left: auto;
+      margin-right: auto;
+      padding-left: 0;
+      padding-right: 0;
+      justify-content: center;
+    }
   </style>
 </head>
 <body class="flex h-screen overflow-hidden text-sm">
 
-  <!-- Icon-only navigation rail — mirrors OmniRoute's dashboard page set.
-       Rendered from the FEATURES registry so adding a feature is one entry. -->
-  <aside class="w-14 border-r border-border bg-card/40 flex flex-col shrink-0">
-    <div class="h-16 flex items-center justify-center border-b border-border shrink-0">
-      <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white shadow-lg" title="KiteRouter · port 3001 · RTK active">🪁</div>
+  <!-- Feature rail — mirrors OmniRoute's dashboard page set, rendered from the
+       FEATURES registry. Expanded (icon + label) by default; collapses to icons. -->
+  <aside id="app-rail" class="relative border-r border-border bg-card/40 flex flex-col shrink-0">
+    <div class="h-16 flex items-center gap-3 px-3 border-b border-border shrink-0">
+      <div class="w-8 h-8 shrink-0 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white shadow-lg" title="KiteRouter · port 3001 · RTK active">🪁</div>
+      <div class="rail-label min-w-0">
+        <div class="font-bold text-sm leading-tight truncate">KiteRouter</div>
+        <div class="text-[10px] text-muted font-mono truncate">Port 3001 · RTK</div>
+      </div>
     </div>
 
-    <nav id="nav-rail" class="flex-1 overflow-y-auto overflow-x-hidden py-2" aria-label="KiteRouter feature navigation">
+    <button type="button" id="rail-toggle" onclick="toggleRail()" aria-controls="nav-rail"
+            aria-expanded="true" aria-label="Collapse navigation"
+            class="absolute -right-3 top-20 z-50 w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition">
+      <i data-lucide="panel-left-close" class="w-3.5 h-3.5"></i>
+    </button>
+
+    <nav id="nav-rail" class="flex-1 overflow-y-auto overflow-x-hidden py-2 px-2" aria-label="KiteRouter feature navigation">
       <!-- Injected from FEATURES -->
     </nav>
 
-    <div class="py-3 border-t border-border flex flex-col items-center gap-1 shrink-0">
+    <div class="py-2 px-2 border-t border-border space-y-0.5 shrink-0">
       <a href="/health" target="_blank" rel="noopener" aria-label="Health endpoint"
-         class="rail-btn w-10 h-10 rounded-lg flex items-center justify-center text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100 transition"
+         class="rail-btn rail-item w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100 transition"
          data-tip="Health · /health">
-        <i data-lucide="heart-pulse" class="w-4 h-4"></i>
+        <i data-lucide="heart-pulse" class="w-4 h-4 shrink-0"></i>
+        <span class="rail-label truncate">Health</span>
       </a>
       <button onclick="downloadConfigBackup()" aria-label="Download configuration backup"
-              class="rail-btn w-10 h-10 rounded-lg flex items-center justify-center text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100 transition"
+              class="rail-btn rail-item w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100 transition"
               data-tip="Backup configuration">
-        <i data-lucide="download" class="w-4 h-4"></i>
+        <i data-lucide="download" class="w-4 h-4 shrink-0"></i>
+        <span class="rail-label truncate">Backup config</span>
       </button>
-      <span class="w-2 h-2 mt-1 rounded-full bg-emerald-400" title="Gateway online — 127.0.0.1:3001"></span>
+      <div class="rail-item w-full flex items-center gap-2.5 px-3 py-2 text-[11px] text-muted"
+           title="Gateway online — 127.0.0.1:3001">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+        <span class="rail-label font-mono truncate">127.0.0.1:3001</span>
+      </div>
     </div>
   </aside>
 
@@ -1118,29 +1150,68 @@ print(res.choices[0].message.content)</pre>
       FEATURES.forEach(f => {
         if (f.group !== lastGroup) {
           if (lastGroup !== null) html += '<div class="rail-sep"></div>';
+          html += `<div class="rail-group px-3 pt-2 pb-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-500">${f.group}</div>`;
           lastGroup = f.group;
         }
         const live = f.status === 'live';
-        const dot = `<span class="rail-dot ${live ? 'bg-emerald-400' : 'bg-amber-400'}"></span>`;
         const tone = live ? 'text-zinc-300' : 'text-zinc-500';
         const tip = live ? `${f.label} · ${f.group}` : `${f.label} · planned · ${f.group}`;
         const aria = live ? f.label : `${f.label} (planned, not implemented)`;
+        const dot = `<span class="rail-dot ${live ? 'bg-emerald-400' : 'bg-amber-400'}"></span>`;
         html += `<button type="button" onclick="switchTab('${f.id}')" id="tab-btn-${f.id}"` +
-                ` class="tab-btn rail-btn w-10 h-10 mx-auto my-0.5 flex items-center justify-center rounded-lg ${tone} hover:bg-zinc-800/60 hover:text-zinc-100 transition"` +
+                ` class="tab-btn rail-btn rail-item w-full flex items-center gap-2.5 px-3 py-2 rounded-lg ${tone} hover:bg-zinc-800/60 hover:text-zinc-100 transition"` +
                 ` data-tip="${tip}" aria-label="${aria}">` +
-                `<i data-lucide="${f.icon}" class="w-4 h-4"></i>${dot}</button>`;
+                `<i data-lucide="${f.icon}" class="w-4 h-4 shrink-0"></i>` +
+                `<span class="rail-label flex-1 text-left truncate">${f.label}</span>${dot}</button>`;
       });
       rail.innerHTML = html;
       if (window.lucide) lucide.createIcons();
       initRailTooltips();
     }
 
+    // ── Collapsing the rail (state remembered per browser) ─────────────────
+
+    const RAIL_STORAGE_KEY = 'kiterouter.railCollapsed';
+
+    function railIsCollapsed() {
+      const rail = document.getElementById('app-rail');
+      return !!rail && rail.classList.contains('rail-collapsed');
+    }
+
+    function setRailCollapsed(collapsed, persist = true) {
+      const rail = document.getElementById('app-rail');
+      const btn = document.getElementById('rail-toggle');
+      if (!rail) return;
+      rail.classList.toggle('rail-collapsed', collapsed);
+      if (btn) {
+        btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        btn.setAttribute('aria-label', collapsed ? 'Expand navigation' : 'Collapse navigation');
+        btn.innerHTML = `<i data-lucide="${collapsed ? 'panel-left-open' : 'panel-left-close'}" class="w-3.5 h-3.5"></i>`;
+      }
+      // A tooltip left over from the expanded state would be stranded.
+      document.getElementById('rail-tooltip')?.classList.add('hidden');
+      if (persist) {
+        try { localStorage.setItem(RAIL_STORAGE_KEY, collapsed ? '1' : '0'); } catch (e) { /* private mode */ }
+      }
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function toggleRail() {
+      setRailCollapsed(!railIsCollapsed());
+    }
+
+    function storedRailCollapsed() {
+      try { return localStorage.getItem(RAIL_STORAGE_KEY) === '1'; } catch (e) { return false; }
+    }
+
     // One fixed tooltip element, positioned on hover. Avoids the clipping a
-    // CSS-only tooltip suffers inside the scrolling rail.
+    // CSS-only tooltip suffers inside the scrolling rail. Only shown when the
+    // rail is collapsed — with labels visible it would just be noise.
     function initRailTooltips() {
       const tip = document.getElementById('rail-tooltip');
       if (!tip) return;
       const show = (el) => {
+        if (!railIsCollapsed()) return;
         const r = el.getBoundingClientRect();
         tip.textContent = el.dataset.tip;
         tip.style.left = `${r.right + 10}px`;
@@ -2760,6 +2831,7 @@ print(res.choices[0].message.content)</pre>
     document.addEventListener('DOMContentLoaded', () => {
       lucide.createIcons();
       renderRail();
+      setRailCollapsed(storedRailCollapsed(), false);
       loadData();
       fetchRecentRequests();
       populateModelDatalist();
