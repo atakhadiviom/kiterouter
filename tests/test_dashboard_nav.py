@@ -41,6 +41,7 @@ LUCIDE_ICONS = {
     "history", "image", "key", "key-round", "languages", "layers",
     "layout-dashboard", "link", "list-checks", "list-ordered", "loader",
     "loader-2", "memory-stick", "messages-square", "monitor", "network",
+    "maximize", "minus",
     "pie-chart", "play", "play-circle", "plug", "plug-zap", "plus", "puzzle",
     "panel-left-close", "panel-left-open",
     "radar", "refresh-cw", "repeat", "route", "save", "scroll-text", "search",

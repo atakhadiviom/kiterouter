@@ -50,6 +50,16 @@
       padding-right: 0;
       justify-content: center;
     }
+
+    /* Provider topology canvas: faint grid that pans and scales with the graph. */
+    .topo-grid {
+      background-image:
+        linear-gradient(rgba(63, 63, 70, .30) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(63, 63, 70, .30) 1px, transparent 1px);
+      background-size: 28px 28px;
+    }
+    .topo-node { transition: border-color .15s, background-color .15s; }
+    .topo-node:hover { background-color: rgba(39, 39, 42, .98); }
   </style>
 </head>
 <body class="flex h-screen overflow-hidden text-sm">
@@ -139,61 +149,46 @@
         </div>
       </div>
 
-      <!-- Provider Topology Section -->
+      <!-- Provider Topology: KiteRouter hub with every provider around it -->
       <div class="bg-card border border-border rounded-xl p-6 space-y-4">
-        <div class="flex items-center justify-between">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 class="font-semibold text-base text-zinc-100 flex items-center gap-2">
-              <i data-lucide="network" class="w-4 h-4 text-blue-400"></i> Provider Topology
-            </h2>
+            <h2 class="font-semibold text-base text-zinc-100">Provider Topology</h2>
             <p id="topology-summary" class="text-xs text-muted mt-0.5">0 active · 0 error</p>
           </div>
-          <button onclick="switchTab('providers')" class="text-xs text-blue-400 hover:text-blue-300 font-medium transition flex items-center gap-1">
-            Manage Providers <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
-          </button>
+          <div class="flex items-center gap-4 flex-wrap">
+            <div class="flex items-center gap-3 text-[11px] text-zinc-400">
+              <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span>Active</span>
+              <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-400"></span>Recent</span>
+              <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-400"></span>Error</span>
+              <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-zinc-600"></span>Untested</span>
+            </div>
+            <button onclick="switchTab('providers')" class="text-xs text-blue-400 hover:text-blue-300 font-medium transition flex items-center gap-1">
+              Manage <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
-          <!-- Active Column -->
-          <div class="bg-zinc-900/70 border border-border/80 rounded-lg p-4 space-y-3">
-            <div class="flex items-center justify-between pb-2 border-b border-border/60">
-              <div class="flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                <span class="text-xs font-semibold text-zinc-200">Active</span>
-              </div>
-              <span id="badge-active-count" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">0</span>
-            </div>
-            <div id="topology-active-list" class="space-y-1.5 min-h-[48px]">
-              <div class="text-xs text-zinc-500 py-1 font-mono">None active yet</div>
-            </div>
+        <div id="topology-viewport"
+             class="relative h-[460px] rounded-lg border border-border/80 bg-zinc-950/60 overflow-hidden cursor-grab active:cursor-grabbing">
+          <div id="topology-canvas"
+               class="topo-grid absolute left-1/2 top-1/2 w-[1040px] h-[660px] -ml-[520px] -mt-[330px]"
+               style="transform-origin: center center;">
+            <svg id="topology-edges" class="absolute inset-0 w-full h-full pointer-events-none"
+                 viewBox="0 0 1040 660" preserveAspectRatio="none"></svg>
+            <div id="topology-nodes" class="absolute inset-0"></div>
           </div>
 
-          <!-- Recent Column -->
-          <div class="bg-zinc-900/70 border border-border/80 rounded-lg p-4 space-y-3">
-            <div class="flex items-center justify-between pb-2 border-b border-border/60">
-              <div class="flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full bg-blue-400"></span>
-                <span class="text-xs font-semibold text-zinc-200">Recent (10m)</span>
-              </div>
-              <span id="badge-recent-count" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">0</span>
-            </div>
-            <div id="topology-recent-list" class="space-y-1.5 min-h-[48px]">
-              <div class="text-xs text-zinc-500 py-1 font-mono">No recent traffic</div>
-            </div>
-          </div>
-
-          <!-- Error Column -->
-          <div class="bg-zinc-900/70 border border-border/80 rounded-lg p-4 space-y-3">
-            <div class="flex items-center justify-between pb-2 border-b border-border/60">
-              <div class="flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full bg-rose-400"></span>
-                <span class="text-xs font-semibold text-zinc-200">Error</span>
-              </div>
-              <span id="badge-error-count" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">0</span>
-            </div>
-            <div id="topology-error-list" class="space-y-1.5 min-h-[48px]">
-              <div class="text-xs text-zinc-500 py-1 font-mono">No failing providers</div>
-            </div>
+          <div class="absolute bottom-4 left-4 flex flex-col gap-1 bg-card/90 backdrop-blur border border-border rounded-lg p-1 shadow-lg">
+            <button onclick="topoZoom(1)" class="w-7 h-7 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition" title="Zoom in" aria-label="Zoom in">
+              <i data-lucide="plus" class="w-4 h-4"></i>
+            </button>
+            <button onclick="topoZoom(-1)" class="w-7 h-7 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition" title="Zoom out" aria-label="Zoom out">
+              <i data-lucide="minus" class="w-4 h-4"></i>
+            </button>
+            <button onclick="topoFit()" class="w-7 h-7 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition" title="Fit to view" aria-label="Fit graph to view">
+              <i data-lucide="maximize" class="w-4 h-4"></i>
+            </button>
           </div>
         </div>
       </div>
@@ -230,13 +225,12 @@
                 <th class="pb-3 font-medium">Provider</th>
                 <th class="pb-3 font-medium">In / Out</th>
                 <th class="pb-3 font-medium">Latency</th>
-                <th class="pb-3 font-medium">Status</th>
                 <th class="pb-3 font-medium text-right">When</th>
               </tr>
             </thead>
             <tbody id="recent-requests-body" class="divide-y divide-border/40 text-zinc-300">
               <tr>
-                <td colspan="6" class="py-6 text-center text-zinc-500 font-sans">No recent requests recorded yet. Test a model in Playground or run Test All Models!</td>
+                <td colspan="5" class="py-6 text-center text-zinc-500 font-sans">No recent requests recorded yet. Test a model in Playground or run Test All Models!</td>
               </tr>
             </tbody>
           </table>
@@ -1418,7 +1412,7 @@ print(res.choices[0].message.content)</pre>
       if (filtered.length === 0) {
         tbody.innerHTML = `
           <tr>
-            <td colspan="6" class="py-6 text-center text-zinc-500 font-sans">
+            <td colspan="5" class="py-6 text-center text-zinc-500 font-sans">
               ${requests && requests.length > 0 ? 'No requests match the selected filter.' : 'No recent requests recorded yet. Test a model in Playground or connect your IDE!'}
             </td>
           </tr>
@@ -1428,30 +1422,31 @@ print(res.choices[0].message.content)</pre>
 
       tbody.innerHTML = filtered.map(r => {
         const isOk = r.status === 'ok';
-        const statusBadge = isOk
-          ? `<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">200 OK</span>`
-          : `<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-rose-500/10 text-rose-400 border border-rose-500/20" title="${escapeHtml(r.error || 'Error')}">ERR</span>`;
-        
+        // The dot carries the status; the reason stays available on hover.
+        const dotTone = isOk ? 'bg-emerald-400' : 'bg-rose-400';
+        const dotTitle = isOk ? '200 OK' : (r.error || 'Error');
+        const tokenTone = isOk ? 'text-emerald-400' : 'text-zinc-500';
+
         return `
           <tr class="hover:bg-zinc-800/60 cursor-pointer transition" onclick="inspectRequest('${escapeHtml(r.id)}')">
-            <td class="py-2.5 font-medium text-zinc-200 max-w-[200px] truncate" title="${escapeHtml(r.model || '')}">
-              ${escapeHtml(r.model || 'unknown')}
+            <td class="py-2.5 max-w-[240px] truncate" title="${escapeHtml(r.model || '')}">
+              <span class="inline-flex items-center gap-2">
+                <span class="w-1.5 h-1.5 shrink-0 rounded-full ${dotTone}" title="${escapeHtml(dotTitle)}"></span>
+                <span class="truncate text-zinc-200">${escapeHtml(r.model || 'unknown')}</span>
+              </span>
             </td>
             <td class="py-2.5">
-              <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300 border border-border">
+              <span class="px-1.5 py-0.5 rounded text-[10px] bg-zinc-800 text-zinc-400 border border-border">
                 ${escapeHtml(r.provider || 'router')}
               </span>
             </td>
-            <td class="py-2.5 text-zinc-400">
+            <td class="py-2.5 ${tokenTone} whitespace-nowrap">
               ${formatTokens(r.tokens_in, r.tokens_out)}
             </td>
-            <td class="py-2.5 text-zinc-400 font-mono">
+            <td class="py-2.5 text-zinc-400 whitespace-nowrap">
               ${r.latency_ms != null ? r.latency_ms + 'ms' : '-'}
             </td>
-            <td class="py-2.5">
-              ${statusBadge}
-            </td>
-            <td class="py-2.5 text-right text-muted">
+            <td class="py-2.5 text-right text-muted whitespace-nowrap">
               ${formatRelativeTime(r.timestamp)}
             </td>
           </tr>
@@ -1548,106 +1543,256 @@ print(res.choices[0].message.content)</pre>
       }
     }
 
-    function renderTopology(providers, recentRequests) {
-      const activeList = [];
-      const errorList = [];
-      const recentList = [];
+    // ── Provider topology graph ────────────────────────────────────────────
+    // Zero-build hub-and-spoke: SVG edges behind absolutely-positioned HTML
+    // nodes. Layout is deterministic (rings by count) so it never jitters
+    // between polls, and zoom/pan is a single CSS transform on the canvas.
 
+    const TOPO = {
+      width: 1040, height: 660,
+      cx: 520, cy: 330,
+      scale: 1, x: 0, y: 0,
+      fitted: false,        // auto-fit once; never yank the view back on a poll
+      userAdjusted: false,  // set by zoom/pan so resize does not override it
+      rings: [
+        { rx: 205, ry: 140, max: 6 },
+        { rx: 340, ry: 232, max: 9 },
+        { rx: 462, ry: 300, max: 14 },
+      ],
+    };
+
+    const TOPO_STATUS = {
+      active:   { dot: 'bg-emerald-400', border: 'border-emerald-500/50', edge: '#34d399' },
+      recent:   { dot: 'bg-amber-400',   border: 'border-amber-500/50',   edge: '#fbbf24' },
+      error:    { dot: 'bg-rose-400',    border: 'border-rose-500/50',    edge: '#fb7185' },
+      untested: { dot: 'bg-zinc-600',    border: 'border-border',         edge: '#3f3f46' },
+      disabled: { dot: 'bg-zinc-700',    border: 'border-border/60',      edge: '#27272a' },
+    };
+
+    function topoStatusOf(conf) {
+      const testRes = conf.test_results || {};
+      const models = Object.keys(testRes);
+      const hasOk = models.some(m => testRes[m]?.status === 'ok');
+      const hasErr = models.some(m => testRes[m]?.status === 'error') || conf.last_test_status === 'error';
+      if (conf.last_test_status === 'ok' || hasOk) return 'active';
+      if (hasErr) return 'error';
+      return 'untested';
+    }
+
+    function topoInitials(name) {
+      const words = String(name).split(/[\s/_-]+/).filter(Boolean);
+      if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+      return String(name).slice(0, 2).toUpperCase();
+    }
+
+    // Stable per-provider tint so the same provider always looks the same.
+    function topoHue(seed) {
+      let h = 0;
+      for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
+      return h;
+    }
+
+    function topoApplyTransform() {
+      const canvas = document.getElementById('topology-canvas');
+      if (canvas) {
+        canvas.style.transform =
+          `translate(${TOPO.x}px, ${TOPO.y}px) scale(${TOPO.scale})`;
+      }
+    }
+
+    function topoZoom(direction) {
+      TOPO.userAdjusted = true;
+      TOPO.scale = Math.min(2.5, Math.max(0.35, TOPO.scale * (direction > 0 ? 1.18 : 1 / 1.18)));
+      topoApplyTransform();
+    }
+
+    function topoFit() {
+      const viewport = document.getElementById('topology-viewport');
+      if (!viewport) return;
+      const fit = Math.min(
+        viewport.clientWidth / TOPO.width,
+        viewport.clientHeight / TOPO.height
+      ) * 0.96;
+      TOPO.scale = Math.min(2.5, Math.max(0.35, fit || 1));
+      TOPO.x = 0;
+      TOPO.y = 0;
+      TOPO.userAdjusted = false;
+      topoApplyTransform();
+    }
+
+    // Drag to pan; zoom controls handle the rest.
+    function initTopologyInteractions() {
+      const viewport = document.getElementById('topology-viewport');
+      if (!viewport || viewport.dataset.bound === '1') return;
+      viewport.dataset.bound = '1';
+
+      let dragging = false;
+      let startX = 0, startY = 0, originX = 0, originY = 0;
+
+      viewport.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('button')) return; // keep the zoom controls clickable
+        dragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        originX = TOPO.x;
+        originY = TOPO.y;
+        viewport.setPointerCapture?.(e.pointerId);
+      });
+      viewport.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        TOPO.x = originX + (e.clientX - startX);
+        TOPO.y = originY + (e.clientY - startY);
+        TOPO.userAdjusted = true;
+        topoApplyTransform();
+      });
+      const endDrag = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        viewport.releasePointerCapture?.(e.pointerId);
+      };
+      viewport.addEventListener('pointerup', endDrag);
+      viewport.addEventListener('pointercancel', endDrag);
+
+      // Only re-fit if the user has not positioned the graph themselves.
+      window.addEventListener('resize', () => {
+        if (!TOPO.userAdjusted) topoFit();
+      });
+    }
+
+    function topoNodeHtml(node) {
+      const tone = TOPO_STATUS[node.status];
+      const hue = topoHue(node.id);
+      return `<div class="topo-node absolute flex items-center gap-2 pl-1.5 pr-2 h-9 w-[132px] rounded-lg border bg-zinc-900/95 backdrop-blur-sm ${tone.border}"
+                   style="left:${node.x}px; top:${node.y}px; transform:translate(-50%,-50%);"
+                   title="${escapeHtml(node.title)}">
+        <span class="w-6 h-6 shrink-0 rounded flex items-center justify-center text-[9px] font-bold"
+              style="background:hsl(${hue} 65% 20%); color:hsl(${hue} 85% 72%);">${topoInitials(node.name)}</span>
+        <span class="flex-1 min-w-0 truncate text-[11px] text-zinc-200">${escapeHtml(node.name)}</span>
+        <span class="w-1.5 h-1.5 shrink-0 rounded-full ${tone.dot}"></span>
+      </div>`;
+    }
+
+    // Shorten an edge so it starts/ends at the node borders rather than centres.
+    function topoEdgePath(fromX, fromY, toX, toY, trimStart, trimEnd) {
+      const dx = toX - fromX;
+      const dy = toY - fromY;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      const sx = fromX + ux * trimStart;
+      const sy = fromY + uy * trimStart;
+      const ex = toX - ux * trimEnd;
+      const ey = toY - uy * trimEnd;
+      // Gentle bow so the spokes read as curves rather than a starburst.
+      const mx = (sx + ex) / 2 - uy * len * 0.06;
+      const my = (sy + ey) / 2 + ux * len * 0.06;
+      return `M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}`;
+    }
+
+    function renderTopologyGraph(nodes) {
+      const edgesEl = document.getElementById('topology-edges');
+      const nodesEl = document.getElementById('topology-nodes');
+      if (!edgesEl || !nodesEl) return;
+
+      // Ring layout: as many nodes per ring as it holds, then the next ring out.
+      let placed = [];
+      let index = 0;
+      TOPO.rings.forEach((ring, ringIndex) => {
+        const slice = nodes.slice(index, index + ring.max);
+        index += slice.length;
+        slice.forEach((node, i) => {
+          // Offset alternate rings so spokes do not line up into a starburst.
+          const offset = ringIndex % 2 === 1 ? Math.PI / slice.length : 0;
+          const angle = (i / slice.length) * Math.PI * 2 - Math.PI / 2 + offset;
+          placed.push({
+            ...node,
+            x: TOPO.cx + Math.cos(angle) * ring.rx,
+            y: TOPO.cy + Math.sin(angle) * ring.ry,
+          });
+        });
+      });
+
+      edgesEl.innerHTML = placed.map(node => {
+        const tone = TOPO_STATUS[node.status];
+        const dim = node.status === 'untested' || node.status === 'disabled';
+        return `<path d="${topoEdgePath(TOPO.cx, TOPO.cy, node.x, node.y, 66, 74)}"
+                      fill="none" stroke="${tone.edge}" stroke-width="1.25"
+                      stroke-opacity="${dim ? '.35' : '.6'}" />`;
+      }).join('');
+
+      const hub = `<div class="absolute flex items-center gap-2.5 px-4 h-12 rounded-xl border-2 border-emerald-500/50 bg-emerald-950/50 backdrop-blur-sm"
+                        style="left:${TOPO.cx}px; top:${TOPO.cy}px; transform:translate(-50%,-50%);">
+        <span class="text-base leading-none">🪁</span>
+        <span class="text-sm font-semibold text-zinc-100">KiteRouter</span>
+      </div>`;
+
+      nodesEl.innerHTML = hub + placed.map(topoNodeHtml).join('');
+      if (window.lucide) lucide.createIcons();
+
+      // Fit once, after the first paint; later polls must not move the view.
+      if (!TOPO.fitted) {
+        TOPO.fitted = true;
+        topoFit();
+      }
+    }
+
+    function renderTopology(providers, recentRequests) {
       const now = Math.floor(Date.now() / 1000);
-      const recentProvidersSet = new Set();
+      const recentProviders = new Set();
       (recentRequests || []).forEach(r => {
         if (r.timestamp && (now - r.timestamp <= 600) && r.provider) {
-          recentProvidersSet.add(r.provider);
+          recentProviders.add(r.provider);
         }
       });
 
       const metaMap = new Map(PROVIDER_METADATA.map(m => [m.id, m]));
       const allProviderKeys = new Set([...metaMap.keys(), ...Object.keys(providers)]);
 
+      const nodes = [];
+      let activeCount = 0;
+      let errorCount = 0;
+
       allProviderKeys.forEach(pId => {
         const conf = providers[pId] || {};
         const meta = metaMap.get(pId);
         const name = meta ? meta.name : pId.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+        let status = topoStatusOf(conf);
+        // Traffic in the last 10 minutes counts as recent when untested, but a
+        // provider switched off in config is neither — labelling it "untested"
+        // would imply it might work.
+        if (status === 'untested' && conf.enabled === false) status = 'disabled';
+        else if (status === 'untested' && recentProviders.has(pId)) status = 'recent';
+
+        if (status === 'active') activeCount++;
+        if (status === 'error') errorCount++;
+
         const testRes = conf.test_results || {};
-        const modelKeys = Object.keys(testRes);
-        const hasOk = modelKeys.some(m => testRes[m]?.status === 'ok');
-        const hasErr = modelKeys.some(m => testRes[m]?.status === 'error') || conf.last_test_status === 'error';
-        const isOk = conf.last_test_status === 'ok' || hasOk;
+        const okCount = Object.keys(testRes).filter(m => testRes[m]?.status === 'ok').length;
+        const errModel = Object.keys(testRes).find(m => testRes[m]?.status === 'error');
+        const errText = errModel ? testRes[errModel]?.error : conf.last_error;
 
-        if (isOk) {
-          activeList.push({ id: pId, name: name, okCount: modelKeys.filter(m => testRes[m]?.status === 'ok').length });
-        } else if (hasErr) {
-          const firstErrModel = modelKeys.find(m => testRes[m]?.status === 'error');
-          const errSnippet = firstErrModel ? testRes[firstErrModel]?.error : (conf.last_error || 'Upstream error');
-          errorList.push({ id: pId, name: name, error: errSnippet });
-        }
+        const bits = [];
+        if (status === 'active') bits.push(okCount > 0 ? `${okCount} model${okCount === 1 ? '' : 's'} OK` : 'online');
+        if (status === 'recent') bits.push('recent traffic');
+        if (status === 'untested') bits.push('not tested yet');
+        if (status === 'disabled') bits.push('disabled in config');
+        if (errText) bits.push(String(errText).slice(0, 160));
 
-        if (recentProvidersSet.has(pId)) {
-          recentList.push({ id: pId, name: name });
-        }
+        nodes.push({
+          id: pId,
+          name,
+          status,
+          title: `${name} · ${bits.join(' · ')}`,
+        });
       });
 
-      // Update Summary Badge
       const summaryEl = document.getElementById('topology-summary');
       if (summaryEl) {
-        summaryEl.innerText = `${activeList.length} active · ${errorList.length} error`;
+        summaryEl.innerText = `${activeCount} active · ${errorCount} error · ${nodes.length} configured`;
       }
 
-      // Counts
-      const activeCountEl = document.getElementById('badge-active-count');
-      if (activeCountEl) activeCountEl.innerText = activeList.length;
-      const recentCountEl = document.getElementById('badge-recent-count');
-      if (recentCountEl) recentCountEl.innerText = recentList.length;
-      const errorCountEl = document.getElementById('badge-error-count');
-      if (errorCountEl) errorCountEl.innerText = errorList.length;
-
-      // Active Container
-      const activeCont = document.getElementById('topology-active-list');
-      if (activeCont) {
-        if (activeList.length === 0) {
-          activeCont.innerHTML = '<div class="text-xs text-zinc-500 py-1 font-mono">None active yet (run Test All Models)</div>';
-        } else {
-          activeCont.innerHTML = activeList.map(a => `
-            <div class="flex items-center justify-between px-2.5 py-1.5 rounded bg-zinc-800/60 border border-emerald-500/20 text-xs">
-              <span class="font-medium text-zinc-200">${escapeHtml(a.name)}</span>
-              <span class="text-[10px] font-mono text-emerald-400">${a.okCount > 0 ? a.okCount + ' OK' : 'online'}</span>
-            </div>
-          `).join('');
-        }
-      }
-
-      // Recent Container
-      const recentCont = document.getElementById('topology-recent-list');
-      if (recentCont) {
-        if (recentList.length === 0) {
-          recentCont.innerHTML = '<div class="text-xs text-zinc-500 py-1 font-mono">No recent traffic (last 10m)</div>';
-        } else {
-          recentCont.innerHTML = recentList.map(r => `
-            <div class="flex items-center justify-between px-2.5 py-1.5 rounded bg-zinc-800/60 border border-blue-500/20 text-xs">
-              <span class="font-medium text-zinc-200">${escapeHtml(r.name)}</span>
-              <span class="text-[10px] font-mono text-blue-400">traffic</span>
-            </div>
-          `).join('');
-        }
-      }
-
-      // Error Container
-      const errorCont = document.getElementById('topology-error-list');
-      if (errorCont) {
-        if (errorList.length === 0) {
-          errorCont.innerHTML = '<div class="text-xs text-zinc-500 py-1 font-mono">No failing providers</div>';
-        } else {
-          errorCont.innerHTML = errorList.map(e => `
-            <div class="px-2.5 py-1.5 rounded bg-zinc-800/60 border border-rose-500/20 text-xs space-y-0.5">
-              <div class="flex items-center justify-between">
-                <span class="font-medium text-zinc-200">${escapeHtml(e.name)}</span>
-                <span class="text-[10px] font-mono text-rose-400">failed</span>
-              </div>
-              <div class="text-[10px] text-rose-400/80 truncate font-mono" title="${escapeHtml(e.error || '')}">${escapeHtml(e.error || 'Error')}</div>
-            </div>
-          `).join('');
-        }
-      }
+      renderTopologyGraph(nodes);
     }
 
     function escapeHtml(str) {
@@ -2832,6 +2977,7 @@ print(res.choices[0].message.content)</pre>
       lucide.createIcons();
       renderRail();
       setRailCollapsed(storedRailCollapsed(), false);
+      initTopologyInteractions();
       loadData();
       fetchRecentRequests();
       populateModelDatalist();
