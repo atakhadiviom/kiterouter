@@ -127,12 +127,15 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
           <h2 class="text-base font-semibold text-zinc-100">Configured AI Providers</h2>
           <p class="text-xs text-muted">Enter tokens and API keys. Changes save directly to <code>~/.kiterouter/config.json</code>.</p>
         </div>
-        <div class="flex items-center gap-3">
-          <button onclick="autoImportAllTokens()" class="px-3.5 py-2 bg-emerald-600/20 border border-emerald-500/30 hover:bg-emerald-600/30 text-emerald-400 font-medium rounded-lg text-xs transition flex items-center gap-2">
-            <i data-lucide="sparkles" class="w-4 h-4"></i> Auto-Fetch All Tokens
+        <div class="flex items-center gap-2">
+          <button onclick="syncFromSource('9router')" class="px-3 py-2 bg-purple-600/20 border border-purple-500/30 hover:bg-purple-600/30 text-purple-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Sync 9Router
           </button>
-          <button onclick="saveAllProviders()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg text-xs transition flex items-center gap-2 shadow-lg shadow-blue-600/20">
-            <i data-lucide="save" class="w-4 h-4"></i> Save Settings
+          <button onclick="autoImportAllTokens()" class="px-3 py-2 bg-emerald-600/20 border border-emerald-500/30 hover:bg-emerald-600/30 text-emerald-400 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i> Auto-Fetch All
+          </button>
+          <button onclick="saveAllProviders()" class="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg text-xs transition flex items-center gap-1.5 shadow-lg shadow-blue-600/20">
+            <i data-lucide="save" class="w-3.5 h-3.5"></i> Save Settings
           </button>
         </div>
       </div>
@@ -313,6 +316,34 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
         }
       } catch (e) {
         alert('Network error fetching token: ' + e);
+      } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        lucide.createIcons();
+      }
+    }
+
+    async function syncFromSource(sourceName) {
+      const btn = event.currentTarget || event.target;
+      const originalText = btn.innerHTML;
+      btn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Syncing...';
+      btn.disabled = true;
+
+      try {
+        const res = await fetch('/api/sync-source', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source: sourceName })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+          alert(`⚡ Synced ${data.imported_count} providers from ${sourceName}:\n${data.imported_providers.join(', ')}`);
+          loadData();
+        } else {
+          alert(`Sync ${sourceName}: ` + (data.message || data.error));
+        }
+      } catch (e) {
+        alert('Sync error: ' + e);
       } finally {
         btn.innerHTML = originalText;
         btn.disabled = false;

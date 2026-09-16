@@ -115,3 +115,11 @@ async def test_config_api_endpoints():
         tok_data = tok_res.json()
         assert tok_data["status"] == "success"
         assert tok_data["has_token"] is True
+
+        # Test sync-source from 9router
+        sync_res = await client.post("/api/sync-source", json={"source": "9router"})
+        assert sync_res.status_code == 200
+        sync_data = sync_res.json()
+        assert sync_data["status"] == "success"
+        assert sync_data["imported_count"] > 0
+        assert "antigravity" in sync_data["imported_providers"]

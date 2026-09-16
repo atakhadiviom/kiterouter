@@ -128,6 +128,44 @@ class TestProviderRequest(BaseModel):
     model: Optional[str] = None
 
 
+class SyncSourceRequest(BaseModel):
+    source: str  # "9router" or "omniroute"
+
+
+@app.post("/api/sync-source")
+async def sync_source_endpoint(req: SyncSourceRequest):
+    """Explicitly sync all credentials and active connections from 9Router or OmniRoute."""
+    from kiterouter.token_fetcher import TokenFetcher
+
+    if req.source == "9router":
+        creds_map = TokenFetcher.fetch_from_9router()
+    elif req.source == "omniroute":
+        creds_map = TokenFetcher.fetch_from_omniroute()
+    else:
+        return JSONResponse({"status": "error", "message": f"Unsupported source: {req.source}"}, status_code=400)
+
+    if not creds_map:
+        return JSONResponse({"status": "warning", "message": f"No active credentials found in {req.source}", "imported_count": 0})
+
+    imported = []
+    for p_name, creds in creds_map.items():
+        if p_name not in config.providers:
+            config.providers[p_name] = {}
+        for k, v in creds.items():
+            config.providers[p_name][k] = v
+        imported.append(p_name)
+
+    config.save()
+    global router
+    router = ProviderRouter(config=config.providers)
+    return {
+        "status": "success",
+        "source": req.source,
+        "imported_count": len(imported),
+        "imported_providers": imported,
+    }
+
+
 class FetchModelsRequest(BaseModel):
     provider: str
 

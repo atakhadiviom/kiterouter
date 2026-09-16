@@ -18,7 +18,93 @@ class TokenFetcher:
     """Extracts tokens and credentials directly from local apps and existing stores."""
 
     @staticmethod
-    def fetch_from_omniroute(target_provider: Optional[str] = None) -> Dict[str, Any]:
+    def fetch_from_9router(target_provider: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+        """
+        Extract active OAuth tokens and API keys directly from 9Router SQLite DB:
+        ~/.9router/db/data.sqlite
+        """
+        results: Dict[str, Dict[str, Any]] = {}
+        db_path = Path.home() / ".9router" / "db" / "data.sqlite"
+        if not db_path.exists():
+            return results
+
+        try:
+            # Read-only URI mode to prevent any locking
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            c = conn.cursor()
+            c.execute(
+                """
+                SELECT provider, authType, email, data, isActive
+                FROM providerConnections
+                WHERE isActive = 1
+                ORDER BY priority ASC
+                """
+            )
+            rows = c.fetchall()
+            conn.close()
+
+            for row in rows:
+                p_name, a_type, email, data_str, is_active = row
+                p_clean = p_name.lower().replace("-", "_")
+
+                # Normalize provider IDs
+                if "openai_compatible" in p_clean or "custom" in p_clean:
+                    p_clean = "custom"
+                elif p_clean == "agy":
+                    p_clean = "antigravity"
+                elif p_clean == "github":
+                    p_clean = "copilot"
+                elif p_clean == "kilocode":
+                    p_clean = "kiro"
+
+                if target_provider and p_clean != target_provider:
+                    continue
+
+                creds_data: Dict[str, Any] = {}
+                if data_str:
+                    try:
+                        creds_data = json.loads(data_str)
+                    except Exception:
+                        pass
+
+                if p_clean not in results:
+                    creds: Dict[str, Any] = {"enabled": True, "source": "9router"}
+                    
+                    at = creds_data.get("accessToken")
+                    rt = creds_data.get("refreshToken")
+                    ak = creds_data.get("apiKey")
+                    proj = creds_data.get("projectId")
+
+                    if at:
+                        creds["token"] = at
+                        creds["access_token"] = at
+                    if rt:
+                        creds["refresh_token"] = rt
+                    if ak:
+                        creds["api_key"] = ak
+                    if proj:
+                        creds["project_id"] = proj
+                    if email:
+                        creds["email"] = email
+
+                    spec = creds_data.get("providerSpecificData", {})
+                    if isinstance(spec, dict):
+                        if "machineId" in spec:
+                            creds["machine_id"] = spec["machineId"]
+                        if "baseUrl" in spec:
+                            creds["base_url"] = spec["baseUrl"]
+                        if "defaultModel" in creds_data and not creds.get("default_model"):
+                            creds["default_model"] = creds_data["defaultModel"]
+
+                    results[p_clean] = creds
+
+        except Exception as e:
+            logger.warning(f"Failed to read from 9Router sqlite: {e}")
+
+        return results
+
+    @staticmethod
+    def fetch_from_omniroute(target_provider: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
         """
         Import active tokens stored in OmniRoute (~/.omniroute/storage.sqlite).
         """
@@ -247,7 +333,10 @@ class TokenFetcher:
             except Exception:
                 pass
 
-        # 3. Fallback to OmniRoute
+        # 3. Fallback to 9Router & OmniRoute
+        r9 = TokenFetcher.fetch_from_9router("copilot")
+        if "copilot" in r9:
+            return r9["copilot"]
         omni = TokenFetcher.fetch_from_omniroute("copilot")
         if "copilot" in omni:
             return omni["copilot"]
@@ -279,7 +368,10 @@ class TokenFetcher:
             except Exception:
                 pass
 
-        # Fallback to OmniRoute cline / claude
+        # Fallback to 9Router or OmniRoute cline / claude
+        r9 = TokenFetcher.fetch_from_9router("cline")
+        if "cline" in r9:
+            return r9["cline"]
         omni = TokenFetcher.fetch_from_omniroute("cline")
         if "cline" in omni:
             return omni["cline"]
@@ -289,8 +381,11 @@ class TokenFetcher:
     @staticmethod
     def fetch_codex_credentials() -> Dict[str, Any]:
         """
-        Extract Codex / OpenAI token from OmniRoute or local config.
+        Extract Codex / OpenAI token from 9Router, OmniRoute or local config.
         """
+        r9 = TokenFetcher.fetch_from_9router("codex")
+        if "codex" in r9:
+            return r9["codex"]
         omni = TokenFetcher.fetch_from_omniroute("codex")
         if "codex" in omni:
             return omni["codex"]
@@ -301,24 +396,43 @@ class TokenFetcher:
         """Unified resolver for any given provider."""
         p = provider_id.lower().replace("-", "_")
         if p == "cursor":
-            return TokenFetcher.fetch_cursor_credentials()
+            creds = TokenFetcher.fetch_cursor_credentials()
+            if not creds:
+                r9 = TokenFetcher.fetch_from_9router("cursor")
+                if "cursor" in r9:
+                    return r9["cursor"]
+            return creds
         elif p == "antigravity":
-            return TokenFetcher.fetch_antigravity_credentials()
+            creds = TokenFetcher.fetch_antigravity_credentials()
+            if not creds:
+                r9 = TokenFetcher.fetch_from_9router("antigravity")
+                if "antigravity" in r9:
+                    return r9["antigravity"]
+            return creds
         elif p == "copilot":
             return TokenFetcher.fetch_copilot_credentials()
         elif p in ("claude", "cline"):
             creds = TokenFetcher.fetch_claude_credentials()
             if not creds:
+                r9 = TokenFetcher.fetch_from_9router(p)
+                if p in r9:
+                    return r9[p]
                 omni = TokenFetcher.fetch_from_omniroute(p)
                 return omni.get(p, {})
             return creds
         elif p == "codex":
             return TokenFetcher.fetch_codex_credentials()
         elif p in ("opencode_go", "opencode_zen"):
+            r9 = TokenFetcher.fetch_from_9router()
+            if "opencode_go" in r9 or "opencode_zen" in r9:
+                return r9.get("opencode_go") or r9.get("opencode_zen") or {}
             omni = TokenFetcher.fetch_from_omniroute()
             return omni.get("opencode_go") or omni.get("opencode_zen") or {}
         else:
-            # Check OmniRoute general lookup
+            # Check 9Router then OmniRoute
+            r9 = TokenFetcher.fetch_from_9router(p)
+            if p in r9:
+                return r9[p]
             omni = TokenFetcher.fetch_from_omniroute(p)
             return omni.get(p, {})
 
@@ -327,11 +441,17 @@ class TokenFetcher:
         """Fetch credentials for all discoverable local providers."""
         found: Dict[str, Dict[str, Any]] = {}
 
-        # 1. First probe OmniRoute store
-        omni_all = TokenFetcher.fetch_from_omniroute()
-        found.update(omni_all)
+        # 1. Probe 9Router store (~/.9router/db/data.sqlite)
+        r9_all = TokenFetcher.fetch_from_9router()
+        found.update(r9_all)
 
-        # 2. Probe native IDEs and CLIs
+        # 2. Probe OmniRoute store (~/.omniroute/storage.sqlite)
+        omni_all = TokenFetcher.fetch_from_omniroute()
+        for k, v in omni_all.items():
+            if k not in found:
+                found[k] = v
+
+        # 3. Probe native IDEs and CLIs (prefer freshest native session if present)
         cursor_creds = TokenFetcher.fetch_cursor_credentials()
         if cursor_creds:
             found["cursor"] = cursor_creds
