@@ -230,6 +230,21 @@ def test_update_rail_button_follows_the_collapse_behaviour(html):
     assert "hidden" in section, "an up-to-date rail button should hide its dot"
 
 
+def test_update_check_distinguishes_a_stale_gateway_from_a_real_failure(html):
+    """A 404 means the running process predates the endpoint — not a git problem."""
+    body = html[html.index("async function loadUpdateStatus"):]
+    body = body[: body.index("async function waitForGatewayThenReload")]
+    assert "res.status === 404" in body
+    assert "Restart to enable" in body
+    assert "not to GitHub" in body, "the failure message must not imply a git/remote problem"
+
+
+def test_clicking_a_failed_update_control_retries(html):
+    """It must not be a dead end when the first check failed."""
+    body = html[html.index("async function runUpdate"):]
+    assert "if (!st)" in body, "no status should trigger a retry, not a silent no-op"
+
+
 def test_update_button_reports_behind_and_local_changes(html):
     body = html[html.index("function renderUpdateStatus"):]
     body = body[: body.index("async function loadUpdateStatus")]

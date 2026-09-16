@@ -1611,10 +1611,25 @@ print(res.choices[0].message.content)</pre>
     async function loadUpdateStatus(fetchRemote) {
       try {
         const res = await fetch(`/api/update/status?fetch=${fetchRemote ? 'true' : 'false'}`);
+        if (res.status === 404) {
+          // The dashboard is served from disk on every request, but endpoint
+          // changes only take effect on restart — so a freshly loaded page can
+          // be talking to an older process that has no update route yet.
+          setUpdateButton('error', 'Restart to enable',
+            'This gateway process is older than the dashboard and has no update endpoint.\n' +
+            'Restart KiteRouter to load it (the dashboard HTML reloads on its own; code does not).',
+            'bg-rose-400');
+          return;
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         renderUpdateStatus(await res.json());
       } catch (e) {
-        setUpdateButton('error', 'Update check failed', String(e.message || e), 'bg-rose-400');
+        setUpdateButton('error', 'Update check failed',
+          // Keep "git"/"GitHub" out of the likely causes: a failure here is the
+          // gateway being unreachable or old, not the remote refusing us.
+          `Could not reach the gateway's update endpoint: ${e.message || e}\n` +
+          'If the gateway is running, this is a connectivity problem to it — not to GitHub.',
+          'bg-rose-400');
       }
     }
 
@@ -1638,7 +1653,15 @@ print(res.choices[0].message.content)</pre>
 
     async function runUpdate() {
       const st = latestUpdateStatus;
-      if (!st || !st.available) return;
+
+      // No status yet (first load raced, or the check failed): a click should
+      // retry rather than silently doing nothing.
+      if (!st) {
+        setUpdateButton('busy', 'Checking…');
+        await loadUpdateStatus(true);
+        return;
+      }
+      if (!st.available) return;
 
       // Nothing to pull: treat the click as a fresh check.
       if (!st.behind) {
