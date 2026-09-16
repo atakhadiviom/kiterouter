@@ -150,7 +150,32 @@ Restores providers, combos, and gateway settings from a JSON payload.
 
 `provider_health` is passive: every logged request records `{status, model, latency_ms, at, error?}` for its provider. The dashboard prefers it over a recorded test whenever it is fresher, so the topology reflects reality between test runs. It is kept in memory with a throttled write to `~/.kiterouter/live_health.json` — deliberately not the main config, which is large and rewritten wholesale.
 
-## Self-update
+## Health history and storage
+
+### `GET /api/health/connections?days=7`
+
+Per-connection health: `checks`, `ok_count`, `ok_rate_pct`, `last_at`, `min/avg/max_latency_ms`, `avg_ttft_ms`, and the newest `latest` row (including its error text).
+
+A **connection** is identified by provider plus a short hash of its credential material. Swapping a credential produces a *new* connection, so a replacement key does not inherit the previous key's failures — the masking problem per-connection health exists to avoid.
+
+### `GET /api/health/history?limit=100`
+
+Raw probe rows, newest first: `at`, `provider`, `connection`, `model`, `ok`, `latency_ms`, `ttft_ms`, `error`.
+
+`ttft_ms` is measured from a real streaming completion, timed at the first chunk carrying content. Where an adapter buffers the whole body before yielding (Cursor reads `resp.content`), TTFT ends up equal to latency — which is honest, because that is what a client experiences.
+
+### `GET /api/store` and `POST /api/store/maintain`
+
+`/api/store` reports `schema_version`, row count, database and **WAL** size, `last_vacuum`, the path, retention, and the maintenance interval. The WAL is reported because an unmanaged one is how the neighbouring OmniRoute installation reached 185 MB.
+
+`POST /api/store/maintain` prunes past retention, truncates the WAL, and vacuums when the weekly interval has elapsed. A background task does the same on `store_maintenance_seconds` (default 900s), independently of the prober — history stays bounded whether or not background probing is enabled.
+
+Retention is declared once in config: `retention_health_checks_days` and `retention_requests_days` (30), `retention_bodies_days` (3), `retention_usage_days` (365).
+
+### `GET /api/prober` (per-connection)
+
+Alongside the schedule, the prober now reports `connections` (per `provider|connection`), `backoff`, `needs_action`, and `timeout_seconds`. `backoff` holds the consecutive `failures`, `next_at`, `last_error` and `needs_action` per connection: a failing connection is skipped until its backoff expires instead of being retried every sweep, and a terminal failure (401/403/`invalid_grant`/expired/revoked) starts at a six-hour backoff and is flagged for the operator rather than retried.
+
 
 ### `GET /api/update/status?fetch=`
 

@@ -105,6 +105,19 @@ class Store:
         with self._lock:
             self._conn.close()
 
+    def reopen(self, path: Path) -> None:
+        """Point the store at a different file.
+
+        Changing ``path`` alone is not enough — the sqlite connection is already
+        open against the old file, so writes would keep landing there. Used by
+        tests to keep a run off the developer's real database.
+        """
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+        self.__init__(Path(path))
+
     # ---------------------------------------------------------------- health
 
     def record_health(

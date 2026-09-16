@@ -14,10 +14,11 @@ The left rail carries every feature KiteRouter intends to have, not just the one
 
 ### Opening a planned feature
 
-Planned entries open a **plan + status panel** stating plainly that it is not implemented, then showing what it will do, the OmniRoute behaviour it is based on, and its definition of done as a checklist. Panels are created on first visit rather than shipping 52 empty sections.
+Planned entries open a **plan + status panel** stating plainly that it is not implemented, then showing what it will do, the OmniRoute behaviour it is based on, and its definition of done as a checklist. Panels are created on first visit rather than shipping 51 empty sections.
 
-### Built today (5)
+### Built today (6)
 
+0. **Health** — per-connection probe history, backed by SQLite. A **Per connection** table shows last-probe age, OK rate, latency as min / avg / max, average TTFT, and the last result — with a `needs action` badge when a failure is terminal (a revoked or expired credential) rather than transient. Below it, the newest probes with their TTFT, and four cards for the database: size, **WAL size**, probes stored and retention, and when the last vacuum ran. A large WAL is called out explicitly. **Probe now** runs a sweep, which is the same action as the Providers tab.
 1. **Provider Topology + Recent Requests (Overview)**
    - **Provider Topology** — a hub-and-spoke graph with KiteRouter at the centre and every provider it knows (the union of built-in adapters and configured ones) placed in rings around it, joined by curved spokes. Zoom in / zoom out / fit controls sit bottom-left, and the graph can be dragged to pan. Layout is deterministic, so nodes never jump between polls; the auto-fit runs once and is not re-applied on the 5-second refresh, and a resize will not override a view you have positioned yourself.
      - Status colours: **green** active (a model really passed), **amber** recent (traffic in the last 10 minutes), **red** error, **grey** untested, and dimmer grey for disabled in config. Hovering a node gives the detail — models that passed, or the actual upstream error text.
@@ -31,11 +32,11 @@ Planned entries open a **plan + status panel** stating plainly that it is not im
 4. **Connect Tools** — copyable drop-in setup guides and configurations for Cursor IDE, Claude Code CLI, Cline & Roo Code, OpenCode CLI, Continue.dev, Aider CLI, and Python OpenAI SDK.
 5. **Playground** — model picker populated from imported/fetched models (including all defined combos and smart `auto`) with a provider filter; value is sent verbatim (prefix intact); output streams live and upstream errors render as errors.
 
-### Planned (52)
+### Planned (51)
 
-Auto-Combo, Routing, Conductor, Resilience, Limits, Quota, Endpoint, API Endpoints, Analytics, Activity, Audit, Costs, Health, Logs, Provider Stats, Runtime, System, Tokens, Usage, Cache, Compression, Context, Conversations, Memory, Translator, Discovery, Free Tiers, Free Rankings, Media Providers, API Manager, A2A Protocol, ACP Agents, Agent Skills, CLI Agents, CLI Code, Cloud Agents, MCP Server, Omni Skills, Search Tools, Tools, Batch, Changelog, Chaos, Gamification, Leaderboard, Onboarding, Plugins, Profile, Radar, Relay, Settings, Webhooks.
+Auto-Combo, Routing, Conductor, Resilience, Limits, Quota, Endpoint, API Endpoints, Analytics, Activity, Audit, Costs, Logs, Provider Stats, Runtime, System, Tokens, Usage, Cache, Compression, Context, Conversations, Memory, Translator, Discovery, Free Tiers, Free Rankings, Media Providers, API Manager, A2A Protocol, ACP Agents, Agent Skills, CLI Agents, CLI Code, Cloud Agents, MCP Server, Omni Skills, Search Tools, Tools, Batch, Changelog, Chaos, Gamification, Leaderboard, Onboarding, Plugins, Profile, Radar, Relay, Settings, Webhooks.
 
-The order they get built in, the reasons, and the one open question (whether to add a local SQLite store for history) are recorded in the plan at `~/.commandcode/plans/kiterouter-omniroute-parity-nav.md`.
+The build order, the measured reasoning behind it, and the retention decisions are recorded in the plan at `~/.commandcode/plans/kiterouter-apply-measured-needs.md`.
 
 `tests/test_dashboard_nav.py` guards the rail and registry offline: entry count, unique ids, required fields, live entries having a real section, planned entries *not* having one, every planned feature documenting itself, coverage of every OmniRoute page, the collapse toggle and its remembered state, labels and group headers being registry-driven, and every icon name being one validated against lucide.
 

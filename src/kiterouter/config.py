@@ -20,6 +20,7 @@ class KiteConfig:
     enable_prober: bool = False
     prober_interval_seconds: int = 900
     prober_delay_seconds: float = 3.0
+    prober_timeout_seconds: int = 90
     prober: Dict[str, Any] = field(default_factory=dict)
     # Retention is declared once, here, rather than per call site. A gateway that
     # only ever grows is a slow-motion outage.
@@ -85,6 +86,7 @@ class KiteConfig:
                 enable_prober=data.get("enable_prober", False),
                 prober_interval_seconds=data.get("prober_interval_seconds", 900),
                 prober_delay_seconds=data.get("prober_delay_seconds", 3.0),
+                prober_timeout_seconds=data.get("prober_timeout_seconds", 90),
                 prober=data.get("prober", {}) if isinstance(data.get("prober", {}), dict) else {},
                 retention_health_checks_days=data.get("retention_health_checks_days", 30),
                 retention_requests_days=data.get("retention_requests_days", 30),

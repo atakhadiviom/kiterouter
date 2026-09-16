@@ -8,6 +8,8 @@ retried in a burst, matching the gateway's anti-ban posture.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -17,6 +19,111 @@ logger = logging.getLogger("kiterouter.prober")
 # Placeholder model ids that stand in for "no catalog configured"; probing them
 # would spend a request on a model that cannot exist upstream.
 PLACEHOLDER_MODELS = {"custom/default"}
+
+PROBE_TIMEOUT_SECONDS = 90
+BACKOFF_BASE_SECONDS = 60
+MAX_BACKOFF_SECONDS = 3600
+# Credentials that need a human are backed off much harder than a cooldown:
+# retrying a revoked key every minute achieves nothing but noise.
+TERMINAL_BACKOFF_SECONDS = 21600
+
+# Errors that no amount of retrying will fix — they need the operator.
+TERMINAL_MARKERS = (
+    "unauthorized",
+    "invalid_grant",
+    "invalid api key",
+    "invalid_api_key",
+    "forbidden",
+    "revoked",
+    "expired",
+    "http 401",
+    "http 403",
+    "re-authenticate",
+    "insufficient",
+    "billing",
+)
+
+
+def connection_id(provider_config: Dict[str, Any]) -> str:
+    """Stable identity for one credential set.
+
+    KiteRouter holds a single credential set per provider, so a connection is
+    identified by a short hash of its credential material. Swapping the
+    credential produces a *new* connection — otherwise a replacement key
+    inherits the previous key's failures, which is exactly the masking problem
+    per-connection health exists to avoid.
+    """
+    material = "|".join(
+        str(provider_config.get(field) or "")
+        for field in (
+            "api_key",
+            "access_token",
+            "token",
+            "refresh_token",
+            "endpoint",
+            "base_url",
+            "account_id",
+        )
+    )
+    if not material.strip("|"):
+        return "default"
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:10]
+
+
+def is_terminal_error(text: Optional[str]) -> bool:
+    """True when the failure needs the operator, not another retry."""
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(marker in lowered for marker in TERMINAL_MARKERS)
+
+
+async def probe_stream(
+    provider: Any, model: str, timeout_seconds: int = PROBE_TIMEOUT_SECONDS
+) -> Dict[str, Any]:
+    """One real completion, timed for latency and time-to-first-token.
+
+    Probing through the streaming path is what makes TTFT measurable. Where an
+    adapter buffers the whole body (Cursor reads ``resp.content`` before
+    yielding), TTFT ends up equal to latency — which is honest, because that is
+    what a client actually experiences.
+    """
+    started = time.time()
+    ttft_ms: Optional[int] = None
+    parts: List[str] = []
+    error: Optional[str] = None
+
+    async def _run() -> None:
+        nonlocal ttft_ms
+        async for chunk in provider.stream_chat(
+            model=model, messages=[{"role": "user", "content": "Hi"}], max_tokens=48
+        ):
+            if not chunk.startswith("data: ") or chunk.strip() == "data: [DONE]":
+                continue
+            try:
+                payload = json.loads(chunk[6:].strip())
+            except Exception:
+                continue
+            delta = (payload.get("choices") or [{}])[0].get("delta") or {}
+            text = delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning")
+            if text:
+                if ttft_ms is None:
+                    ttft_ms = int((time.time() - started) * 1000)
+                parts.append(text)
+
+    try:
+        await asyncio.wait_for(_run(), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        error = f"probe timed out after {timeout_seconds}s"
+    except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+
+    return {
+        "text": "".join(parts),
+        "latency_ms": int((time.time() - started) * 1000),
+        "ttft_ms": ttft_ms,
+        "error": error,
+    }
 
 
 class HealthProber:
@@ -29,19 +136,26 @@ class HealthProber:
         evaluate: Callable[[str], bool],
         interval_seconds: int = 900,
         delay_seconds: float = 3.0,
+        timeout_seconds: int = PROBE_TIMEOUT_SECONDS,
+        record_health: Optional[Callable[..., None]] = None,
     ) -> None:
         self._get_router = get_router
         self._get_config = get_config
         self._evaluate = evaluate
+        self._record_health = record_health
 
         self.interval_seconds = interval_seconds
         self.delay_seconds = delay_seconds
+        self.timeout_seconds = timeout_seconds
         self.enabled = False
         self.running = False
         self.last_run: Optional[int] = None
         self.last_duration_ms: Optional[int] = None
         self.next_run: Optional[int] = None
         self.last_error: Optional[str] = None
+
+        # Per-connection failure state, keyed provider|connection.
+        self._backoff: Dict[str, Dict[str, Any]] = {}
 
         self._task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
@@ -95,7 +209,7 @@ class HealthProber:
     # ---------------------------------------------------------------- probing
 
     def _targets(self) -> List[Dict[str, Any]]:
-        """Provider/model pairs to probe, honouring an optional config override."""
+        """One target per connection, honouring an optional model override."""
         router = self._get_router()
         config = self._get_config()
         overrides = {}
@@ -103,18 +217,23 @@ class HealthProber:
         if isinstance(prober_conf, dict) and isinstance(prober_conf.get("models"), dict):
             overrides = prober_conf["models"]
 
+        provider_configs = getattr(config, "providers", None) or {}
         targets: List[Dict[str, Any]] = []
+
         for name, provider in getattr(router, "providers", {}).items():
             if name in overrides:
                 models = list(overrides[name] or [])
             else:
                 models = list(provider.get_models())[:1]
 
+            connection = connection_id(provider_configs.get(name) or {})
+
             probeable = [m for m in models if m not in PLACEHOLDER_MODELS]
             if not probeable:
                 targets.append(
                     {
                         "provider": name,
+                        "connection": connection,
                         "model": None,
                         "instance": provider,
                         "skip_reason": "no models configured",
@@ -122,20 +241,61 @@ class HealthProber:
                 )
                 continue
             for model in probeable:
-                targets.append({"provider": name, "model": model, "instance": provider})
+                targets.append(
+                    {
+                        "provider": name,
+                        "connection": connection,
+                        "model": model,
+                        "instance": provider,
+                    }
+                )
         return targets
 
+    def _state_for(self, key: str) -> Dict[str, Any]:
+        return self._backoff.setdefault(
+            key, {"failures": 0, "next_at": 0.0, "needs_action": False, "last_error": None}
+        )
+
+    def _note_failure(self, key: str, error: Optional[str]) -> Dict[str, Any]:
+        """Grow the backoff for a connection that just failed."""
+        state = self._state_for(key)
+        state["failures"] += 1
+        state["last_error"] = (error or "")[:200] or None
+        terminal = is_terminal_error(error)
+        state["needs_action"] = terminal
+        if terminal:
+            # A revoked key or an unpaid account does not get better on its own,
+            # so it starts at the long backoff instead of climbing to it.
+            wait = TERMINAL_BACKOFF_SECONDS
+        else:
+            wait = min(
+                MAX_BACKOFF_SECONDS, BACKOFF_BASE_SECONDS * (2 ** (state["failures"] - 1))
+            )
+        state["next_at"] = time.time() + wait
+        return state
+
+    def _note_success(self, key: str) -> None:
+        state = self._state_for(key)
+        state.update({"failures": 0, "next_at": 0.0, "needs_action": False, "last_error": None})
+
+    def backoff_state(self) -> Dict[str, Any]:
+        return {k: dict(v) for k, v in self._backoff.items()}
+
     async def probe_once(self) -> Dict[str, Any]:
-        """Probe every provider sequentially and persist the honest results."""
+        """Probe every connection sequentially and persist the honest results."""
         started = time.time()
         config = self._get_config()
-        summary = {"ok": 0, "error": 0, "unavailable": 0}
+        summary = {"ok": 0, "error": 0, "unavailable": 0, "skipped": 0, "needs_action": 0}
         results: Dict[str, Any] = {}
+        now = time.time()
 
         for target in self._targets():
             if self._stop.is_set():
                 break
-            name, model, provider = target["provider"], target["model"], target["instance"]
+            name = target["provider"]
+            connection = target["connection"]
+            model, provider = target["model"], target["instance"]
+            key = f"{name}|{connection}"
 
             reason = target.get("skip_reason")
             if not reason:
@@ -148,55 +308,98 @@ class HealthProber:
 
             if reason:
                 summary["unavailable"] += 1
-                results[name] = {
+                results[key] = {
                     "status": "unavailable",
+                    "provider": name,
+                    "connection": connection,
                     "model": model,
                     "reason": reason,
                     "probed_at": int(time.time()),
                 }
                 continue
 
-            probe_start = time.time()
+            # A connection that keeps failing is left alone until its backoff
+            # expires instead of being retried on every sweep.
+            state = self._state_for(key)
+            if state["next_at"] and now < state["next_at"]:
+                summary["skipped"] += 1
+                results[key] = {
+                    "status": "backoff",
+                    "provider": name,
+                    "connection": connection,
+                    "model": model,
+                    "reason": f"retry in {int(state['next_at'] - now)}s after "
+                              f"{state['failures']} failure(s)",
+                    "needs_action": state["needs_action"],
+                    "error": state["last_error"],
+                    "probed_at": int(time.time()),
+                }
+                if state["needs_action"]:
+                    summary["needs_action"] += 1
+                continue
+
+            measurement = await probe_stream(provider, model, self.timeout_seconds)
+            latency = measurement["latency_ms"]
+            ttft = measurement["ttft_ms"]
+            content = measurement["text"]
+
             status = "error"
-            error_msg: Optional[str] = None
-            response_text = ""
-            try:
-                res = await provider.chat_complete(
-                    model=model, messages=[{"role": "user", "content": "Hi"}], max_tokens=48
-                )
-                content = res.get("choices", [{}])[0].get("message", {}).get("content", "")
-                response_text = content[:200]
+            error_msg: Optional[str] = measurement["error"]
+            if error_msg is None:
                 if self._evaluate(content):
-                    error_msg = content[:200]
+                    error_msg = (content or "empty response")[:200]
                 else:
                     status = "ok"
-            except Exception as e:
-                error_msg = str(e)
 
-            latency = round((time.time() - probe_start) * 1000)
             if status == "ok":
                 summary["ok"] += 1
+                self._note_success(key)
             else:
                 summary["error"] += 1
+                state = self._note_failure(key, error_msg)
+                if state["needs_action"]:
+                    summary["needs_action"] += 1
 
             probed_at = int(time.time())
-            entry = {
+            self._record(
+                config,
+                name,
+                model,
+                {
+                    "status": status,
+                    "latency_ms": latency,
+                    "ttft_ms": ttft,
+                    "response": (content or "")[:200],
+                    "error": error_msg,
+                    "tested_at": probed_at,
+                    "source": "prober",
+                },
+            )
+            if self._record_health is not None:
+                try:
+                    self._record_health(
+                        name,
+                        connection,
+                        status == "ok",
+                        model=model,
+                        latency_ms=latency,
+                        ttft_ms=ttft,
+                        error=error_msg,
+                    )
+                except Exception as e:
+                    logger.debug("Could not persist health row: %s", e)
+
+            results[key] = {
                 "status": status,
-                "latency_ms": latency,
-                "response": response_text,
-                "error": error_msg,
-                "tested_at": probed_at,
-                "source": "prober",
-            }
-            results[name] = {
-                "status": status,
+                "provider": name,
+                "connection": connection,
                 "model": model,
                 "latency_ms": latency,
+                "ttft_ms": ttft,
                 "error": error_msg,
+                "needs_action": self._state_for(key)["needs_action"],
                 "probed_at": probed_at,
             }
-
-            self._record(config, name, model, entry)
             if self.delay_seconds > 0:
                 await asyncio.sleep(self.delay_seconds)
 
@@ -206,7 +409,9 @@ class HealthProber:
         state = {
             "last_run": self.last_run,
             "last_duration_ms": self.last_duration_ms,
-            "providers": results,
+            "connections": results,
+            # Kept for the existing provider cards, which read the old shape.
+            "providers": {v["provider"]: v for v in results.values() if "provider" in v},
             "summary": summary,
         }
         try:
@@ -236,15 +441,22 @@ class HealthProber:
     def status(self) -> Dict[str, Any]:
         config = self._get_config()
         state = getattr(config, "prober", None)
+        state = state if isinstance(state, dict) else {}
         return {
             "enabled": self.enabled,
             "running": self.running,
             "interval_seconds": self.interval_seconds,
             "delay_seconds": self.delay_seconds,
+            "timeout_seconds": self.timeout_seconds,
             "last_run": self.last_run,
             "last_duration_ms": self.last_duration_ms,
             "next_run": self.next_run,
             "last_error": self.last_error,
-            "providers": (state or {}).get("providers", {}) if isinstance(state, dict) else {},
-            "summary": (state or {}).get("summary", {}) if isinstance(state, dict) else {},
+            "connections": state.get("connections", {}),
+            "providers": state.get("providers", {}),
+            "summary": state.get("summary", {}),
+            "backoff": self.backoff_state(),
+            "needs_action": sorted(
+                key for key, value in self._backoff.items() if value.get("needs_action")
+            ),
         }

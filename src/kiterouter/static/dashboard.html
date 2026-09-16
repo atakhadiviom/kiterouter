@@ -245,7 +245,61 @@
       </div>
     </section>
 
-    <!-- Tab 2: Providers Setup -->
+    <!-- Tab: Health (per-connection probes) -->
+    <section id="tab-health" class="p-8 space-y-6 hidden">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 class="font-semibold text-base text-zinc-100">Connection Health</h2>
+          <p id="health-summary" class="text-xs text-muted mt-0.5">Loading…</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="runProbeNow()" id="btn-health-probe"
+                  class="px-3 py-1.5 bg-cyan-600/20 border border-cyan-500/30 hover:bg-cyan-600/30 text-cyan-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+            <i data-lucide="zap" class="w-3.5 h-3.5"></i> Probe now
+          </button>
+          <button onclick="loadHealthPage()"
+                  class="px-3 py-1.5 bg-zinc-900 border border-border hover:bg-zinc-800 text-zinc-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
+          </button>
+        </div>
+      </div>
+
+      <div id="health-store-stats" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
+
+      <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+        <div>
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-200">Per connection</h3>
+          <p class="text-xs text-muted mt-0.5">Each credential set is tracked separately, so a replacement key does not inherit the old one's failures. Latency shown as min / avg / max.</p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs font-mono">
+            <thead>
+              <tr class="border-b border-border text-muted uppercase text-[10px] tracking-wider">
+                <th class="pb-3 font-medium">Provider</th>
+                <th class="pb-3 font-medium">Connection</th>
+                <th class="pb-3 font-medium">Last probe</th>
+                <th class="pb-3 font-medium">OK</th>
+                <th class="pb-3 font-medium">Latency</th>
+                <th class="pb-3 font-medium">TTFT</th>
+                <th class="pb-3 font-medium">Last result</th>
+              </tr>
+            </thead>
+            <tbody id="health-connections-body" class="divide-y divide-border/40 text-zinc-300">
+              <tr><td colspan="7" class="py-6 text-center text-zinc-500 font-sans">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-200">Recent probes</h3>
+        <div id="health-recent-list" class="space-y-1.5">
+          <div class="text-xs text-zinc-500 py-1 font-mono">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab: Providers -->
     <section id="tab-providers" class="p-8 space-y-6 hidden">
       <!-- Section Header -->
       <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -969,10 +1023,7 @@ print(res.choices[0].message.content)</pre>
         summary:'Spend per key, provider and model over time, so free tiers and paid overflow are both visible.',
         reference:'OmniRoute domain_cost_history (12,091 rows), daily_usage_summary, tier_assignments',
         checklist:['capture per-request cost where the upstream reports it','roll up daily','flag free-tier vs paid usage','tests + wiki sync'] },
-      { id:'health', label:'Health', icon:'heart-pulse', group:'Observability', status:'planned',
-        summary:'Real health checks per connection on a schedule, distinct from a one-off manual test.',
-        reference:'OmniRoute /dashboard/health; provider_connections.health_check_interval, last_health_check_at, last_ping_at, consecutive_use_count',
-        checklist:['schedule per-connection checks (reuse the prober)','record last-check and outcome per account','separate health from quota state','tests + wiki sync'] },
+      { id:'health', label:'Health', icon:'heart-pulse', group:'Observability', status:'live' },
       { id:'logs', label:'Logs', icon:'scroll-text', group:'Observability', status:'planned',
         summary:'Full request history with request/response bodies — today there is only a 100-entry ring buffer of 400-character previews.',
         reference:'OmniRoute call_logs (18,025 rows) with artifact_relpath/sha256, request_detail_logs, log_export_destinations',
@@ -1314,6 +1365,9 @@ print(res.choices[0].message.content)</pre>
         loadProberStatus();
         loadClineAuthStatus();
       }
+      if (tabId === 'health') {
+        loadHealthPage();
+      }
     }
 
     function setRequestsFilter(filter) {
@@ -1356,6 +1410,20 @@ print(res.choices[0].message.content)</pre>
     function formatAgo(timestamp) {
       const rel = formatRelativeTime(timestamp);
       return rel === 'now' ? 'just now' : `${rel} ago`;
+    }
+
+    function formatMs(value) {
+      if (value === null || value === undefined) return '—';
+      const ms = Number(value);
+      if (!Number.isFinite(ms)) return '—';
+      return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+    }
+
+    function formatBytes(value) {
+      const bytes = Number(value) || 0;
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / 1048576).toFixed(1)} MB`;
     }
 
     function formatK(num) {
@@ -2016,6 +2084,130 @@ print(res.choices[0].message.content)</pre>
     function escapeHtml(str) {
       if (!str) return '';
       return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // ── Health page (per-connection probes) ────────────────────────────────
+
+    function renderHealthStats(stats, proberStatus) {
+      const el = document.getElementById('health-store-stats');
+      if (!el) return;
+      const cards = [
+        { label: 'Database', value: formatBytes(stats?.size_bytes), note: 'kiterouter.db' },
+        {
+          label: 'WAL',
+          value: formatBytes(stats?.wal_bytes),
+          note: (stats?.wal_bytes || 0) > 16 * 1048576 ? 'large — checkpointing runs on a schedule' : 'checkpointed',
+        },
+        { label: 'Probes stored', value: String(stats?.health_checks ?? 0), note: `kept ${stats?.retention_days?.health_checks ?? '?'} days` },
+        {
+          label: 'Last vacuum',
+          value: stats?.last_vacuum ? formatAgo(stats.last_vacuum) : 'never',
+          note: proberStatus?.enabled ? `probing every ${proberStatus.interval_seconds}s` : 'background probing off',
+        },
+      ];
+      el.innerHTML = cards.map(c => `
+        <div class="bg-card border border-border p-4 rounded-xl">
+          <div class="text-[10px] font-medium text-muted uppercase tracking-wider">${c.label}</div>
+          <div class="text-xl font-bold mt-1.5 text-zinc-100">${c.value}</div>
+          <div class="text-[11px] text-muted mt-0.5">${escapeHtml(c.note)}</div>
+        </div>`).join('');
+    }
+
+    function renderHealthConnections(rows, needsAction) {
+      const tbody = document.getElementById('health-connections-body');
+      if (!tbody) return;
+      const flagged = needsAction instanceof Set ? needsAction : new Set(needsAction || []);
+
+      if (!rows || !rows.length) {
+        tbody.innerHTML = `<tr><td colspan="7" class="py-6 text-center text-zinc-500 font-sans">
+          No probes recorded yet. Enable background probing on the Providers tab, or press Probe now.
+        </td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = rows.map(r => {
+        const latest = r.latest || {};
+        const ok = latest.ok === 1;
+        const tone = ok ? 'bg-emerald-400' : 'bg-rose-400';
+        const key = `${r.provider}|${r.connection}`;
+        const needsHuman = flagged.has(key);
+        const detail = latest.error
+          ? escapeHtml(String(latest.error).slice(0, 90))
+          : (ok ? '<span class="text-emerald-400">ok</span>' : 'no content');
+
+        return `
+          <tr class="hover:bg-zinc-800/40">
+            <td class="py-2.5 text-zinc-200">
+              <span class="inline-flex items-center gap-2">
+                <span class="w-1.5 h-1.5 shrink-0 rounded-full ${tone}"></span>${escapeHtml(r.provider)}
+              </span>
+            </td>
+            <td class="py-2.5 text-muted" title="${escapeHtml(key)}">${escapeHtml(String(r.connection).slice(0, 10))}</td>
+            <td class="py-2.5 text-zinc-400">${latest.at ? formatAgo(latest.at) : '—'}</td>
+            <td class="py-2.5 ${r.ok_rate_pct >= 90 ? 'text-emerald-400' : 'text-amber-400'}">${r.ok_rate_pct}%</td>
+            <td class="py-2.5 text-zinc-400 whitespace-nowrap">${formatMs(r.min_latency_ms)} / ${formatMs(r.avg_latency_ms)} / ${formatMs(r.max_latency_ms)}</td>
+            <td class="py-2.5 text-zinc-400">${formatMs(r.avg_ttft_ms)}</td>
+            <td class="py-2.5 truncate max-w-[220px]" title="${escapeHtml(String(latest.error || ''))}">
+              ${detail}${needsHuman ? ' <span class="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-amber-500/10 border border-amber-500/30 text-amber-300">needs action</span>' : ''}
+            </td>
+          </tr>`;
+      }).join('');
+    }
+
+    function renderHealthRecent(checks) {
+      const el = document.getElementById('health-recent-list');
+      if (!el) return;
+      if (!checks || !checks.length) {
+        el.innerHTML = '<div class="text-xs text-zinc-500 py-1 font-mono">Nothing probed yet.</div>';
+        return;
+      }
+      el.innerHTML = checks.map(c => {
+        const ok = c.ok === 1;
+        const tone = ok ? 'text-emerald-400' : 'text-rose-400';
+        return `
+          <div class="flex items-center justify-between gap-3 text-xs py-1.5 border-t border-border/60">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="font-mono ${tone}">${ok ? 'ok' : 'fail'}</span>
+              <span class="text-zinc-300 shrink-0">${escapeHtml(c.provider)}</span>
+              <span class="text-muted font-mono truncate">${escapeHtml(c.model || '')}</span>
+            </div>
+            <div class="flex items-center gap-3 shrink-0 text-muted">
+              <span>${formatMs(c.latency_ms)}</span>
+              <span>ttft ${formatMs(c.ttft_ms)}</span>
+              <span>${formatAgo(c.at)}</span>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    async function loadHealthPage() {
+      const summaryEl = document.getElementById('health-summary');
+      try {
+        const [connections, history, storeStats, proberStatus] = await Promise.all([
+          fetch('/api/health/connections?days=7').then(r => r.json()),
+          fetch('/api/health/history?limit=25').then(r => r.json()),
+          fetch('/api/store').then(r => r.json()),
+          fetch('/api/prober').then(r => r.json()),
+        ]);
+
+        renderHealthStats(storeStats, proberStatus);
+        renderHealthConnections(
+          connections.connections || [],
+          new Set(proberStatus.needs_action || [])
+        );
+        renderHealthRecent(history.checks || []);
+
+        if (summaryEl) {
+          const rows = connections.connections || [];
+          const failing = rows.filter(r => (r.latest || {}).ok !== 1).length;
+          const lastProbe = rows.reduce((m, r) => Math.max(m, (r.latest || {}).at || 0), 0);
+          summaryEl.innerText = rows.length
+            ? `${rows.length} connection${rows.length === 1 ? '' : 's'} · ${failing} failing · last probe ${formatAgo(lastProbe)}`
+            : 'No connections probed yet';
+        }
+      } catch (e) {
+        if (summaryEl) summaryEl.innerHTML = `<span class="text-rose-400">Could not load health data: ${escapeHtml(String(e.message || e))}</span>`;
+      }
     }
 
     // ---------------------------------------------------- background health prober

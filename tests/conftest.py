@@ -28,10 +28,11 @@ def _isolate_config(tmp_path, monkeypatch):
     monkeypatch.setattr(server.live_health, "_entries", {})
     monkeypatch.setattr(server.live_health, "_last_save", 0.0)
 
-    # The store is created at import against the real home directory, so point it
-    # at a throwaway file for the duration of each test.
+    # The store is created at import against the real home directory. Patching
+    # its path would not help: the sqlite connection is already open against the
+    # old file, so writes would still land in the developer's real database.
     monkeypatch.setattr(server, "STORE_FILE", config_dir / "kiterouter.db")
-    monkeypatch.setattr(server.store, "path", config_dir / "kiterouter.db")
+    server.store.reopen(config_dir / "kiterouter.db")
 
 
 @pytest.fixture(autouse=True)

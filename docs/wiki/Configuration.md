@@ -11,8 +11,14 @@ Config lives at `~/.kiterouter/config.json` and is editable from the dashboard (
 | `max_tool_chars` | `12000` | Cap on tool-result body size before truncation |
 | `enable_prober` | `false` | Background health prober. Off by default; enable from the dashboard or `POST /api/prober` |
 | `prober_interval_seconds` | `900` | Delay between probe sweeps (minimum 60) |
-| `prober_delay_seconds` | `3.0` | Pause between providers within one sweep — keeps probing from looking like a burst |
-| `prober` | `{}` | Prober state (last sweep, per-provider results). Optional `prober.models` overrides which models are probed, e.g. `{"models": {"cline": ["cline-free/solar-pro4"]}}` |
+| `prober_delay_seconds` | `3.0` | Pause between connections within one sweep — keeps probing from looking like a burst |
+| `prober_timeout_seconds` | `90` | Per-probe timeout. Some providers are genuinely slow (Cursor's `auto` averages 56s), so this is a knob rather than a constant |
+| `prober` | `{}` | Prober state (last sweep, per-connection results). Optional `prober.models` overrides which models are probed, e.g. `{"models": {"cline": ["cline-free/solar-pro4"]}}` |
+| `retention_health_checks_days` | `30` | Probe history kept in `kiterouter.db` |
+| `retention_requests_days` | `30` | Request log retention (used from Wave 3) |
+| `retention_bodies_days` | `3` | Request/response artifact retention (used from Wave 3) |
+| `retention_usage_days` | `365` | Usage and quota rollups (used from Waves 2 and 4) |
+| `store_maintenance_seconds` | `900` | How often prune + WAL checkpoint (+ weekly vacuum) runs |
 | `providers` | `{}` | Per-provider credential blocks (below) |
 | `combos` | `{}` | Named multi-model routing chains with strategy and candidate models |
 

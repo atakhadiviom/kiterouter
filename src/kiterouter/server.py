@@ -516,6 +516,8 @@ prober = HealthProber(
     evaluate=is_error_content,
     interval_seconds=config.prober_interval_seconds,
     delay_seconds=config.prober_delay_seconds,
+    timeout_seconds=config.prober_timeout_seconds,
+    record_health=store.record_health,
 )
 
 # Pending interactive Cline re-auth flows, keyed by an opaque flow id so the

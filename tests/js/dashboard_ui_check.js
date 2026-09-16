@@ -53,6 +53,10 @@ const topoCanvas = reg('topology-canvas');
 const topoEdges = reg('topology-edges', 'svg');
 const topoNodes = reg('topology-nodes');
 const topoSummary = reg('topology-summary', 'p');
+const healthStats = reg('health-store-stats');
+const healthBody = reg('health-connections-body', 'tbody');
+const healthRecent = reg('health-recent-list');
+const healthSummary = reg('health-summary', 'p');
 topoViewport.clientWidth = 1000;
 topoViewport.clientHeight = 460;
 
@@ -87,7 +91,8 @@ vm.runInContext(
   code + '\nglobalThis.__t = { FEATURES, FEATURE_BY_ID, renderRail, renderFeaturePlan, ' +
   'setRailCollapsed, toggleRail, storedRailCollapsed, railIsCollapsed, RAIL_STORAGE_KEY, ' +
   'renderTopology, renderTopologyGraph, topoZoom, topoFit, topoStatusOf, topoEdgePath, ' +
-  'initTopologyInteractions, TOPO };',
+  'initTopologyInteractions, TOPO, renderHealthStats, renderHealthConnections, ' +
+  'renderHealthRecent, formatMs, formatBytes };',
   ctx
 );
 const t = ctx.__t;
@@ -113,8 +118,13 @@ const groups = [...new Set(t.FEATURES.map(f => f.group))];
 const groupHeaders = [...railHtml.matchAll(/class="rail-group[^"]*">([^<]+)<\/div>/g)].map(m => m[1]);
 check(groupHeaders.length === groups.length, `rendered ${groupHeaders.length} group headers, expected ${groups.length}`);
 check((railHtml.match(/rail-sep/g) || []).length === groups.length - 1, 'expected a separator between groups');
-check((railHtml.match(/bg-emerald-400/g) || []).length === 5, 'expected 5 green dots for live features');
-check((railHtml.match(/bg-amber-400/g) || []).length === 52, 'expected 52 amber dots for planned features');
+const liveCount = t.FEATURES.filter(f => f.status === 'live').length;
+const plannedCount = t.FEATURES.filter(f => f.status === 'planned').length;
+check(liveCount + plannedCount === 57, 'every feature must be live or planned');
+check((railHtml.match(/bg-emerald-400/g) || []).length === liveCount,
+  `expected ${liveCount} green dots for live features`);
+check((railHtml.match(/bg-amber-400/g) || []).length === plannedCount,
+  `expected ${plannedCount} amber dots for planned features`);
 check((railHtml.match(/data-tip="/g) || []).length === 57, 'every feature should carry a tooltip');
 check(!/\$\{/.test(railHtml), 'unsubstituted placeholder left in rail markup');
 
@@ -284,6 +294,88 @@ check(/bg-emerald-400/.test(blockFor('Kiro AI')), 'a provider serving live traff
 // with no live data at all, behaviour falls back to test results
 t.renderTopology(liveProviders, [], {});
 check(/no live traffic yet/.test(topoSummary.innerText || ''), 'summary should say when there is no live traffic');
+
+// ── health page ───────────────────────────────────────────────────────────
+check(t.formatMs(null) === '—', 'a missing latency should render as a dash, not NaN');
+check(t.formatMs(950) === '950ms', `formatMs(950) = ${t.formatMs(950)}`);
+check(t.formatMs(12274) === '12.3s', `formatMs(12274) = ${t.formatMs(12274)}`);
+check(t.formatBytes(0) === '0 B' && t.formatBytes(2048) === '2.0 KB', 'byte formatting');
+check(t.formatBytes(189 * 1048576) === '189.0 MB', `large sizes: ${t.formatBytes(189 * 1048576)}`);
+
+const nowHealth = Math.floor(Date.now() / 1000);
+const healthRows = [
+  {
+    provider: 'antigravity',
+    connection: '799e2aa3b3',
+    checks: 20,
+    ok_count: 19,
+    last_at: nowHealth - 30,
+    avg_latency_ms: 12274,
+    avg_ttft_ms: 9132,
+    min_latency_ms: 8000,
+    max_latency_ms: 28000,
+    ok_rate_pct: 95.0,
+    latest: { ok: 1, at: nowHealth - 30, error: null, model: 'gemini-3.8-flash-high' },
+  },
+  {
+    provider: 'cline',
+    connection: 'b0cb9d0141',
+    checks: 8,
+    ok_count: 0,
+    last_at: nowHealth - 600,
+    avg_latency_ms: 90,
+    avg_ttft_ms: null,
+    min_latency_ms: 70,
+    max_latency_ms: 200,
+    ok_rate_pct: 0.0,
+    latest: { ok: 0, at: nowHealth - 600, error: 'Cline upstream HTTP 401', model: 'cline-free/…' },
+  },
+];
+
+t.renderHealthConnections(healthRows, new Set(['cline|b0cb9d0141']));
+const healthHtml = healthBody._innerHTML;
+
+check(healthHtml.split('<tr').length - 1 === 2, `expected 2 rows, got ${healthHtml.split('<tr').length - 1}`);
+check(/antigravity/.test(healthHtml) && /cline/.test(healthHtml), 'both connections should render');
+check(/bg-emerald-400/.test(healthHtml) && /bg-rose-400/.test(healthHtml), 'status dots should reflect ok/fail');
+check(/95%/.test(healthHtml) && /0%/.test(healthHtml), 'ok rate should be shown');
+check(/12.3s/.test(healthHtml), 'average latency should be humanised');
+check(/9.1s/.test(healthHtml), 'TTFT should be shown');
+check(/needs action/.test(healthHtml), 'a terminal failure should be flagged for the operator');
+check(!/undefined|NaN|null/.test(healthHtml), 'no raw null/undefined should leak into the table');
+// the connection id is truncated but the full key stays in the title
+check(/title="cline\|b0cb9d0141"/.test(healthHtml), 'the full connection key should be recoverable');
+// a missing ttft must not render as a fake number
+check(healthHtml.includes('—'), 'a missing TTFT should render as a dash');
+
+t.renderHealthConnections([], new Set());
+check(/No probes recorded yet/.test(healthBody._innerHTML), 'an empty table should explain itself');
+
+t.renderHealthStats(
+  { size_bytes: 61440, wal_bytes: 0, health_checks: 132, last_vacuum: nowHealth - 3600, retention_days: { health_checks: 30 } },
+  { enabled: true, interval_seconds: 60 }
+);
+const statsHtml = healthStats._innerHTML;
+check(/60\.0 KB/.test(statsHtml), 'database size should be formatted');
+check(/132/.test(statsHtml), 'probe count should be shown');
+check(/30 days/.test(statsHtml), 'retention should be visible');
+check(/probing every 60s/.test(statsHtml), 'cadence should be visible');
+
+// a WAL worth worrying about should say so
+t.renderHealthStats({ size_bytes: 1, wal_bytes: 185 * 1048576, health_checks: 1, retention_days: { health_checks: 30 } }, {});
+check(/checkpointing runs on a schedule/.test(healthStats._innerHTML), 'a large WAL should be called out');
+
+t.renderHealthRecent([
+  { provider: 'cursor', model: 'auto', ok: 1, latency_ms: 2068, ttft_ms: 1500, at: nowHealth - 5 },
+  { provider: 'glm', model: 'glm-5.3', ok: 0, latency_ms: 80, ttft_ms: null, at: nowHealth - 500, error: 'HTTP 401' },
+]);
+const recentHtml = healthRecent._innerHTML;
+check(/ok/.test(recentHtml) && /fail/.test(recentHtml), 'recent probes should show pass and fail');
+check(/ttft/.test(recentHtml), 'recent probes should show TTFT');
+check(!/NaN/.test(recentHtml), 'no NaN in the recent list');
+
+t.renderHealthRecent([]);
+check(/Nothing probed yet/.test(healthRecent._innerHTML), 'empty recent list should explain itself');
 
 // ── planned panels ────────────────────────────────────────────────────────
 const planned = t.FEATURES.filter(f => f.status === 'planned');
