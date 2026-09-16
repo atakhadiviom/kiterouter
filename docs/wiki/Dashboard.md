@@ -43,6 +43,7 @@ The order they get built in, the reasons, and the one open question (whether to 
 
 ## Header Features
 - **Online Radar**: Real-time periodic latency ping to `127.0.0.1:3001` with status indicator.
+- **Update**: shows how far behind `origin/main` the checkout is (`3 behind`, `Up to date`), amber when commits are waiting, and includes uncommitted local changes in the label. The tooltip carries the SHA pair, how long ago the remote was checked, any fetch error, and a warning that a fast-forward pull fails if local changes conflict. Clicking confirms first, then updates and reloads the gateway in place; the page polls `/health` until the server answers again and only then reloads itself. Nothing to pull means the click is treated as a fresh check.
 - **Backup**: One-click download of clean `kiterouter-backup.json` configuration file.
 
 ## Import section

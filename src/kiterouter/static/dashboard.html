@@ -119,6 +119,11 @@
           <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
           <span id="radar-latency">Online</span>
         </span>
+        <button id="btn-update" onclick="runUpdate()" title="Checking for updates…"
+                class="px-3 py-1.5 rounded-lg border border-border text-xs text-zinc-300 hover:bg-zinc-800 transition flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="git-commit-vertical" class="w-3.5 h-3.5"></i>
+          <span id="update-label">Checking…</span>
+        </button>
         <button onclick="downloadConfigBackup()" class="px-3 py-1.5 rounded-lg border border-border text-xs text-zinc-300 hover:bg-zinc-800 transition flex items-center gap-1.5" title="Export clean JSON backup of configuration & combos">
           <i data-lucide="download" class="w-3.5 h-3.5"></i> Backup
         </button>
@@ -1537,6 +1542,131 @@ print(res.choices[0].message.content)</pre>
 
     function downloadConfigBackup() {
       window.location.href = '/api/config/backup';
+    }
+
+    // ── Self-update ────────────────────────────────────────────────────────
+    // Shows how far behind origin/main the checkout is, and updates in place.
+    // Reloading is done by the server replacing itself, so the PID is kept.
+
+    const UPDATE_TONE = {
+      current: 'px-3 py-1.5 rounded-lg border border-border text-xs text-zinc-300 hover:bg-zinc-800 transition flex items-center gap-1.5 whitespace-nowrap',
+      available: 'px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-600/10 text-xs text-amber-300 hover:bg-amber-600/20 transition flex items-center gap-1.5 whitespace-nowrap',
+      busy: 'px-3 py-1.5 rounded-lg border border-blue-500/40 bg-blue-600/10 text-xs text-blue-300 transition flex items-center gap-1.5 whitespace-nowrap',
+      error: 'px-3 py-1.5 rounded-lg border border-rose-500/40 bg-rose-600/10 text-xs text-rose-300 hover:bg-rose-600/20 transition flex items-center gap-1.5 whitespace-nowrap',
+    };
+
+    let latestUpdateStatus = null;
+
+    function setUpdateButton(tone, label, title) {
+      const btn = document.getElementById('btn-update');
+      const labelEl = document.getElementById('update-label');
+      if (!btn || !labelEl) return;
+      btn.className = UPDATE_TONE[tone] || UPDATE_TONE.current;
+      labelEl.innerText = label;
+      if (title) btn.title = title;
+    }
+
+    function renderUpdateStatus(st) {
+      latestUpdateStatus = st;
+      if (!st || !st.available) {
+        setUpdateButton('error', 'No git checkout',
+          'This install is not a git checkout, so it cannot self-update.');
+        return;
+      }
+
+      const behind = st.behind || 0;
+      const parts = [behind > 0 ? `${behind} behind` : 'Up to date'];
+      if (st.dirty) {
+        parts.push(`${st.changed_files} local change${st.changed_files === 1 ? '' : 's'}`);
+      }
+
+      const checked = st.fetched_at ? `, last checked ${formatAgo(st.fetched_at)}` : ', not yet fetched';
+      let title;
+      if (behind > 0) {
+        title = `${behind} commit(s) behind ${st.upstream} (${st.local_sha} → ${st.remote_sha})\nClick to update and reload the gateway in place${checked}`;
+      } else {
+        title = `Up to date with ${st.upstream} at ${st.local_sha}${checked}\nClick to check again`;
+      }
+      if (st.dirty) title += `\n${st.changed_files} uncommitted local change(s): a fast-forward pull fails if they conflict`;
+      if (st.fetch_error) title += `\nLast fetch failed: ${st.fetch_error}`;
+
+      setUpdateButton(behind > 0 ? 'available' : 'current', parts.join(' · '), title);
+    }
+
+    async function loadUpdateStatus(fetchRemote) {
+      try {
+        const res = await fetch(`/api/update/status?fetch=${fetchRemote ? 'true' : 'false'}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        renderUpdateStatus(await res.json());
+      } catch (e) {
+        setUpdateButton('error', 'Update check failed', String(e.message || e));
+      }
+    }
+
+    // The server replaces itself, so wait for it to answer again before reloading.
+    async function waitForGatewayThenReload(maxSeconds) {
+      for (let i = 0; i < maxSeconds; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        try {
+          const res = await fetch(`/health?cachebust=${Date.now()}`, { cache: 'no-store' });
+          if (res.ok) {
+            window.location.reload();
+            return true;
+          }
+        } catch (e) { /* still coming back up */ }
+      }
+      setUpdateButton('error', 'Reload manually',
+        'The gateway did not come back in time; reload the page or restart KiteRouter.');
+      return false;
+    }
+
+    async function runUpdate() {
+      const st = latestUpdateStatus;
+      if (!st || !st.available) return;
+
+      // Nothing to pull: treat the click as a fresh check.
+      if (!st.behind) {
+        setUpdateButton('busy', 'Checking…');
+        await loadUpdateStatus(true);
+        return;
+      }
+
+      const dirtyNote = st.dirty
+        ? `\n\nYou have ${st.changed_files} uncommitted local change(s). A fast-forward pull fails if they conflict with incoming commits.`
+        : '';
+      if (!confirm(
+        `Update KiteRouter by ${st.behind} commit(s)?\n\n` +
+        `${st.local_sha} → ${st.remote_sha}\n` +
+        `The gateway reloads in place, keeping its PID.${dirtyNote}`
+      )) return;
+
+      setUpdateButton('busy', 'Updating…');
+      try {
+        const res = await fetch('/api/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ restart: true })
+        });
+        const data = await res.json();
+        if (data.status === 'error') {
+          setUpdateButton('error', 'Update failed');
+          alert(data.message || 'Update failed.');
+          loadUpdateStatus(false);
+          return;
+        }
+        if (data.status === 'up_to_date') {
+          setUpdateButton('current', 'Up to date');
+          loadUpdateStatus(true);
+          return;
+        }
+        setUpdateButton('busy', 'Reloading…');
+        await waitForGatewayThenReload(30);
+      } catch (e) {
+        // The connection usually drops because the gateway is already
+        // restarting, so wait for it rather than reporting a failure.
+        setUpdateButton('busy', 'Reloading…');
+        await waitForGatewayThenReload(30);
+      }
     }
 
     async function pingGatewayRadar() {
@@ -3033,10 +3163,12 @@ print(res.choices[0].message.content)</pre>
       pingGatewayRadar();
       loadProberStatus();
       loadClineAuthStatus();
+      loadUpdateStatus(true);
       setInterval(loadData, 5000);
       setInterval(fetchRecentRequests, 2500);
       setInterval(pingGatewayRadar, 4000);
       setInterval(loadProberStatus, 20000);
+      setInterval(() => loadUpdateStatus(false), 60000);
     });
   </script>
 </body>

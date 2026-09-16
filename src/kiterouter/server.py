@@ -1,6 +1,7 @@
 """KiteRouter FastAPI server: dual protocol (OpenAI + Anthropic) and RTK compression."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -14,7 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from kiterouter import cline_auth
+from kiterouter import cline_auth, updater
 from kiterouter.compressor import compress_messages
 from kiterouter.config import KiteConfig
 from kiterouter.live_health import LiveHealth
@@ -535,6 +536,43 @@ async def run_prober_now():
     """Run one probe sweep immediately, regardless of the schedule."""
     state = await prober.probe_once()
     return {"status": "completed", **state}
+
+
+UPDATE_STATUS_TTL_SECONDS = 300
+_update_status_cache: Dict[str, Any] = {"at": 0.0, "data": None}
+
+
+class UpdateRequest(BaseModel):
+    restart: bool = True
+
+
+@app.get("/api/update/status")
+async def update_status(fetch: bool = False):
+    """How far behind the checkout is.
+
+    A network fetch happens at most once per TTL so a 5-second dashboard poll
+    does not hammer the remote; ``fetched_at`` reports the real age.
+    """
+    now = time.time()
+    cached = _update_status_cache["data"]
+    if (not fetch and cached is not None
+            and now - _update_status_cache["at"] < UPDATE_STATUS_TTL_SECONDS):
+        return cached
+
+    data = await asyncio.to_thread(updater.status, fetch, fetch)
+    _update_status_cache["at"] = now
+    _update_status_cache["data"] = data
+    return data
+
+
+@app.post("/api/update")
+async def run_update(req: UpdateRequest):
+    """Pull the latest commit, sync dependencies and reload in place."""
+    result = await asyncio.to_thread(updater.run_update, req.restart)
+    if result.get("status") == "updated":
+        _update_status_cache["at"] = 0.0
+        _update_status_cache["data"] = None
+    return result
 
 
 @app.get("/api/cline/auth/status")

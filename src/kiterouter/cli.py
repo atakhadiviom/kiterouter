@@ -109,37 +109,44 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 
 def cmd_update(args: argparse.Namespace) -> None:
-    """Zero-build on-the-fly update like Hermes Agent."""
+    """Zero-build on-the-fly update.
+
+    When the daemon is running it performs the update itself so the reload
+    happens in the right process: ``os.execv`` replaces that process in place and
+    keeps its PID. (The previous implementation sent SIGHUP, which nothing
+    handles — uvicorn only traps SIGINT/SIGTERM — so it killed the daemon while
+    reporting a successful hot-reload.)
+    """
+    from kiterouter import updater
+
+    config = KiteConfig.load()
+    pid = get_running_pid()
+
+    if pid:
+        print(f"🪁 Updating via the running gateway (PID {pid})...")
+        url = f"http://{config.host}:{config.port}/api/update"
+        try:
+            resp = httpx.post(url, json={"restart": True}, timeout=600.0)
+            result = resp.json()
+            print(result.get("message", ""))
+            if result.get("status") == "error":
+                raise SystemExit(1)
+            if result.get("restart_scheduled"):
+                print("♻️  Gateway reloading — its PID is preserved, code reloaded.")
+            return
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"⚠️  Could not update through the gateway ({e}); updating files only.")
+
     print("🪁 Checking for updates (zero-build git pull)...")
-    try:
-        # 1. Pull latest commits
-        res = subprocess.run(
-            ["git", "pull", "--ff-only"],
-            cwd=str(REPO_DIR),
-            capture_output=True,
-            text=True,
-        )
-        print(res.stdout.strip() or res.stderr.strip())
-
-        # 2. Update editable dependencies with uv
-        print("Syncing dependencies with uv...")
-        subprocess.run(
-            ["uv", "sync"],
-            cwd=str(REPO_DIR),
-            check=True,
-            capture_output=True,
-        )
-
-        # 3. Reload running daemon if active
-        pid = get_running_pid()
-        if pid:
-            print(f"Hot-reloading running daemon (PID {pid})...")
-            os.kill(pid, signal.SIGHUP)
-            print("✅ KiteRouter successfully updated and hot-reloaded on the fly!")
-        else:
-            print("✅ KiteRouter updated successfully!")
-    except Exception as e:
-        print(f"❌ Update failed: {e}")
+    result = updater.apply_update()
+    status = result.get("status")
+    print(result.get("message", ""))
+    if status == "error":
+        raise SystemExit(1)
+    if status == "updated":
+        print("✅ Files updated. No gateway was running, so nothing needed reloading.")
 
 
 def main() -> None:

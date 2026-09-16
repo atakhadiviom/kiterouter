@@ -37,7 +37,7 @@ LUCIDE_ICONS = {
     "brain-circuit", "chart-line", "check", "clipboard-list", "cloud", "code-2",
     "coins", "copy", "cpu", "database", "database-zap", "dollar-sign", "download",
     "download-cloud", "edit-3", "file-archive", "gamepad-2", "gauge", "gift",
-    "git-branch", "git-fork", "git-merge", "graduation-cap", "heart-pulse",
+    "git-branch", "git-commit-vertical", "git-fork", "git-merge", "graduation-cap", "heart-pulse",
     "history", "image", "key", "key-round", "languages", "layers",
     "layout-dashboard", "link", "list-checks", "list-ordered", "loader",
     "loader-2", "memory-stick", "messages-square", "monitor", "network",
@@ -205,6 +205,39 @@ def test_tooltips_are_suppressed_while_expanded(html):
     tip_fn = html[html.index("function initRailTooltips"):]
     tip_fn = tip_fn[: tip_fn.index("const hide")]
     assert "railIsCollapsed()" in tip_fn
+
+
+# ── self-update control ───────────────────────────────────────────────────────
+
+def test_header_has_a_self_update_button(html):
+    assert 'id="btn-update"' in html
+    assert 'id="update-label"' in html
+    assert "runUpdate()" in html
+
+
+def test_update_button_reports_behind_and_local_changes(html):
+    body = html[html.index("function renderUpdateStatus"):]
+    body = body[: body.index("async function loadUpdateStatus")]
+    assert "behind" in body and "Up to date" in body
+    assert "local change" in body, "uncommitted local changes should be surfaced"
+    assert "fetch_error" in body, "a failed fetch should be shown, not hidden"
+
+
+def test_update_is_confirmed_before_it_runs(html):
+    """An update replaces the running process, so it must not fire on a stray click."""
+    body = html[html.index("async function runUpdate"):]
+    assert "confirm(" in body
+    assert "'/api/update'" in body
+    assert "restart: true" in body
+
+
+def test_dashboard_waits_for_the_gateway_to_come_back(html):
+    """The server replaces itself, so the page must poll before reloading."""
+    body = html[html.index("async function waitForGatewayThenReload"):]
+    body = body[: body.index("async function runUpdate")]
+    assert "/health?cachebust=" in body
+    assert "reload()" in body
+    assert "Reload manually" in body, "a stuck restart must not leave a spinner forever"
 
 
 def test_all_icons_are_valid_lucide_names(html):

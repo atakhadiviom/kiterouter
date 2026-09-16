@@ -146,7 +146,30 @@ Restores providers, combos, and gateway settings from a JSON payload.
 
 ### `GET /health`
 
-`{"status": "ok", ...}`
+`{"status": "ok", ...}` plus `provider_health` (last real outcome per provider, see below) and `prober` state.
+
+`provider_health` is passive: every logged request records `{status, model, latency_ms, at, error?}` for its provider. The dashboard prefers it over a recorded test whenever it is fresher, so the topology reflects reality between test runs. It is kept in memory with a throttled write to `~/.kiterouter/live_health.json` — deliberately not the main config, which is large and rewritten wholesale.
+
+## Self-update
+
+### `GET /api/update/status?fetch=`
+
+How the checkout compares to its upstream: `behind`, `ahead`, `dirty`, `changed_files`, `branch`, `upstream`, `local_sha`, `remote_sha`, `fetched_at`, `fetch_error`, `can_update`.
+
+`fetch=true` performs a `git fetch`, but no more often than a 300-second TTL (and the response is cached) so the dashboard's poll cannot hammer the remote. `fetched_at` always reports the real age of the comparison, and `fetch_error` is surfaced rather than swallowed.
+
+### `POST /api/update`
+
+```json
+{ "restart": true }
+```
+
+Fetches, fast-forwards with `git pull --ff-only`, runs `uv sync`, import-checks the new code, then reloads.
+
+- Returns `up_to_date`, `updated` or `error` with a human-readable `message`.
+- Refuses when the local branch is **ahead** of upstream, and when `git pull` fails (with the git output included).
+- **Never reloads into code that fails to import** — it reports the error instead of taking the gateway down.
+- Reloading uses `os.execv`, replacing the process in place so the **PID is preserved** and no supervisor is needed. The previous implementation sent `SIGHUP`, which nothing handles (uvicorn traps only SIGINT/SIGTERM), so it killed the daemon while reporting a successful hot-reload.
 
 ## Error conventions
 
