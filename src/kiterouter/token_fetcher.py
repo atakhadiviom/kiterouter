@@ -114,6 +114,8 @@ class TokenFetcher:
                     if ak:
                         creds["api_key"] = ak
                     if proj:
+                        if p_clean == "antigravity" and ("reference" in str(proj).lower() or not proj):
+                            proj = "aicode-consumers"
                         creds["project_id"] = proj
                     if email:
                         creds["email"] = email

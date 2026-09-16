@@ -418,8 +418,9 @@ async def fetch_all_models():
 
 
 class TestModelRequest(BaseModel):
-    provider: str
     model: str
+    provider: Optional[str] = None
+    prompt: Optional[str] = None
 
 
 class TestAllModelsRequest(BaseModel):
@@ -488,22 +489,36 @@ async def test_provider(req: TestProviderRequest):
 @app.post("/api/test-model")
 async def test_model_endpoint(req: TestModelRequest):
     """Test a specific model for a provider and persist honest test status."""
-    target_provider = router.providers.get(req.provider)
+    prov_name = req.provider
+    mod_name = req.model
+    if not prov_name:
+        if "/" in mod_name:
+            prov_name, mod_name = mod_name.split("/", 1)
+        else:
+            for p_key, p_inst in router.providers.items():
+                if mod_name in p_inst.supported_models:
+                    prov_name = p_key
+                    break
+    if not prov_name:
+        prov_name = "antigravity" if "gemini" in mod_name else "custom"
+
+    target_provider = router.providers.get(prov_name)
     if not target_provider:
         return JSONResponse(
-            {"status": "error", "message": f"Unknown provider {req.provider}"},
+            {"status": "error", "message": f"Unknown provider {prov_name}"},
             status_code=400,
         )
 
+    test_prompt = req.prompt or "Hi"
     start = time.time()
     status = "error"
     error_msg = None
     response_text = ""
     try:
         res = await target_provider.chat_complete(
-            model=req.model,
-            messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=60,
+            model=mod_name,
+            messages=[{"role": "user", "content": test_prompt}],
+            max_tokens=256,
         )
         latency = round((time.time() - start) * 1000)
         content = res.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -519,13 +534,13 @@ async def test_model_endpoint(req: TestModelRequest):
         error_msg = str(e)
 
     # Persist in config
-    if req.provider not in config.providers:
-        config.providers[req.provider] = {}
-    p_conf = config.providers[req.provider]
+    if prov_name not in config.providers:
+        config.providers[prov_name] = {}
+    p_conf = config.providers[prov_name]
     if "test_results" not in p_conf or not isinstance(p_conf["test_results"], dict):
         p_conf["test_results"] = {}
 
-    p_conf["test_results"][req.model] = {
+    p_conf["test_results"][mod_name] = {
         "status": status,
         "latency_ms": latency,
         "response": response_text,
@@ -539,8 +554,8 @@ async def test_model_endpoint(req: TestModelRequest):
 
     return {
         "status": status,
-        "provider": req.provider,
-        "model": req.model,
+        "provider": prov_name,
+        "model": mod_name,
         "latency_ms": latency,
         "response": response_text,
         "error": error_msg,
