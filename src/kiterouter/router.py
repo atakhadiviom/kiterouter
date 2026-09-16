@@ -108,16 +108,40 @@ class ProviderRouter:
         self.combos = combos or {}
 
     def get_combo(self, raw_model: str) -> Optional[Dict[str, Any]]:
-        """Look up a combo by name or 'combo/<name>'."""
-        if not self.combos:
-            return None
+        """Look up a combo by name, 'combo/<name>', or resolve 'auto'/'default'."""
         clean = raw_model
         if clean.startswith("combo/"):
             clean = clean[6:]
-        if clean in self.combos and isinstance(self.combos[clean], dict):
-            c = dict(self.combos[clean])
-            c.setdefault("name", clean)
-            return c
+        if self.combos and clean in self.combos:
+            data = dict(self.combos[clean])
+            data.setdefault("name", clean)
+            return data
+
+        # OmniRoute-style smart auto/default virtual combo
+        if clean.lower() in ("auto", "default"):
+            if self.combos and "auto" in self.combos:
+                data = dict(self.combos["auto"])
+                data.setdefault("name", "auto")
+                return data
+            if self.combos and "Own" in self.combos:
+                data = dict(self.combos["Own"])
+                data.setdefault("name", "auto")
+                return data
+
+            # Dynamic auto combo: assemble from available providers
+            auto_models = [
+                "opencode_go/deepseek-flash",
+                "opencode_free/nemotron-3-ultra-free",
+                "cursor/composer-2.5",
+                "antigravity/gemini-3.7-flash-high",
+            ]
+            return {
+                "name": "auto",
+                "strategy": "fallback",
+                "models": auto_models,
+                "description": "Smart zero-config auto routing across working providers",
+                "source": "system",
+            }
         return None
 
     async def get_available_providers(self) -> List[str]:
@@ -132,6 +156,30 @@ class ProviderRouter:
         """Return all available models grouped across all providers."""
         models = []
         seen_ids = set()
+
+        # OmniRoute-style smart auto models
+        models.append({
+            "id": "auto",
+            "raw_id": "auto",
+            "object": "model",
+            "owned_by": "kiterouter-smart",
+            "description": "Zero-config auto router: routes to best working provider with failover",
+            "is_combo": True,
+            "strategy": "fallback",
+        })
+        seen_ids.add("auto")
+
+        models.append({
+            "id": "default",
+            "raw_id": "default",
+            "object": "model",
+            "owned_by": "kiterouter-smart",
+            "description": "Default router with automatic priority fallback",
+            "is_combo": True,
+            "strategy": "fallback",
+        })
+        seen_ids.add("default")
+
         for provider_id, provider in self.providers.items():
             for m in getattr(provider, "supported_models", []):
                 model_id = m if "/" in m else f"{provider_id}/{m}"

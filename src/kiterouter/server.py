@@ -49,6 +49,9 @@ def record_request_log(
     status: str,
     latency_ms: int,
     error: Optional[str] = None,
+    prompt_preview: Optional[str] = None,
+    response_preview: Optional[str] = None,
+    tokens_saved: int = 0,
 ) -> Dict[str, Any]:
     global _recent_requests
     entry = {
@@ -57,10 +60,13 @@ def record_request_log(
         "model": model,
         "provider": provider,
         "tokens_in": max(1, int(tokens_in)),
-        "tokens_out": max(1, int(tokens_out)),
+        "tokens_out": max(0, int(tokens_out)),
         "status": status,
         "latency_ms": int(latency_ms),
         "error": error,
+        "prompt_preview": (prompt_preview or "")[:400],
+        "response_preview": (response_preview or "")[:400],
+        "tokens_saved": max(0, int(tokens_saved)),
     }
     _recent_requests.insert(0, entry)
     _recent_requests = _recent_requests[:100]
@@ -778,16 +784,100 @@ async def get_recent_requests(limit: int = 15):
     }
 
 
+@app.delete("/api/recent-requests")
+async def clear_recent_requests():
+    """Clear all recent request logs."""
+    global _recent_requests
+    _recent_requests = []
+    try:
+        if REQUEST_LOG_FILE.exists():
+            REQUEST_LOG_FILE.unlink()
+    except Exception:
+        pass
+    return {"status": "success", "message": "Request history cleared"}
+
+
+@app.get("/api/stats")
+async def get_gateway_stats():
+    """Return high-level operational telemetry and stats."""
+    total = len(_recent_requests)
+    ok_count = sum(1 for r in _recent_requests if r.get("status") == "ok")
+    err_count = total - ok_count
+    rate = round((ok_count / total * 100), 1) if total > 0 else 100.0
+    tot_in = sum(r.get("tokens_in", 0) for r in _recent_requests)
+    tot_out = sum(r.get("tokens_out", 0) for r in _recent_requests)
+    tot_saved = sum(r.get("tokens_saved", 0) for r in _recent_requests)
+    avg_latency = round(sum(r.get("latency_ms", 0) for r in _recent_requests) / total) if total > 0 else 0
+
+    return {
+        "status": "success",
+        "total_requests": total,
+        "successful_requests": ok_count,
+        "failed_requests": err_count,
+        "success_rate_pct": rate,
+        "tokens_in": tot_in,
+        "tokens_out": tot_out,
+        "tokens_saved_rtk": tot_saved + router.metrics.get("saved_tokens_approx", 0),
+        "avg_latency_ms": avg_latency,
+        "combos_count": len(config.combos),
+        "providers_configured": len(config.providers),
+    }
+
+
+@app.get("/api/config/backup")
+async def backup_config():
+    """Export configuration as downloadable backup."""
+    data = {
+        "host": config.host,
+        "port": config.port,
+        "enable_rtk": config.enable_rtk,
+        "max_tool_chars": config.max_tool_chars,
+        "combos": config.combos,
+        "providers": config.providers,
+    }
+    return JSONResponse(
+        content=data,
+        headers={"Content-Disposition": "attachment; filename=kiterouter-backup.json"},
+    )
+
+
+class ConfigRestoreRequest(BaseModel):
+    combos: Optional[Dict[str, Any]] = None
+    providers: Optional[Dict[str, Any]] = None
+    enable_rtk: Optional[bool] = None
+
+
+@app.post("/api/config/restore")
+async def restore_config(req: ConfigRestoreRequest):
+    """Restore combos and provider configurations from a backup."""
+    if req.combos is not None:
+        for k, v in req.combos.items():
+            if isinstance(v, dict):
+                config.combos[k] = v
+    if req.providers is not None:
+        for k, v in req.providers.items():
+            if isinstance(v, dict):
+                config.providers[k] = v
+    if req.enable_rtk is not None:
+        config.enable_rtk = req.enable_rtk
+    config.save()
+    router.set_combos(config.combos)
+    return {"status": "success", "message": "Configuration restored successfully"}
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(req: ChatCompletionRequest):
     messages = req.messages
+    rtk_saved = 0
     if config.enable_rtk:
         messages, stats = compress_messages(
             messages, max_tool_chars=config.max_tool_chars
         )
-        router.metrics["saved_tokens_approx"] += stats.saved_chars // 4
+        rtk_saved = stats.saved_chars // 4
+        router.metrics["saved_tokens_approx"] += rtk_saved
 
     prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
+    prompt_str = str(messages[-1].get("content", "")) if messages else ""
     tokens_in = max(1, prompt_chars // 4)
     start_time = time.time()
     combo_info = router.get_combo(req.model)
@@ -840,6 +930,9 @@ async def chat_completions(req: ChatCompletionRequest):
                     status="error" if has_error else "ok",
                     latency_ms=latency_ms,
                     error=err_text,
+                    prompt_preview=prompt_str,
+                    response_preview=resp_text,
+                    tokens_saved=rtk_saved,
                 )
 
         return StreamingResponse(logging_stream(), media_type="text/event-stream")
@@ -882,6 +975,9 @@ async def chat_completions(req: ChatCompletionRequest):
             status="error" if has_error else "ok",
             latency_ms=latency_ms,
             error=err_text,
+            prompt_preview=prompt_str,
+            response_preview=resp_text,
+            tokens_saved=rtk_saved,
         )
 
         return {

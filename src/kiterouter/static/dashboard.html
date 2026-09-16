@@ -53,6 +53,9 @@
         <button onclick="switchTab('combos')" id="tab-btn-combos" class="tab-btn w-full flex items-center gap-3 px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800/60 transition">
           <i data-lucide="layers" class="w-4 h-4"></i> Combos
         </button>
+        <button onclick="switchTab('connect')" id="tab-btn-connect" class="tab-btn w-full flex items-center gap-3 px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800/60 transition">
+          <i data-lucide="plug" class="w-4 h-4"></i> Connect Tools
+        </button>
         <button onclick="switchTab('playground')" id="tab-btn-playground" class="tab-btn w-full flex items-center gap-3 px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800/60 transition">
           <i data-lucide="terminal" class="w-4 h-4"></i> Test Playground
         </button>
@@ -73,9 +76,13 @@
     <header class="h-16 border-b border-border flex items-center justify-between px-8 bg-card/20 shrink-0">
       <h1 id="page-title" class="font-semibold text-lg text-zinc-100">Overview</h1>
       <div class="flex items-center gap-3">
-        <span id="header-status" class="px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-full text-xs font-mono">
-          Gateway Ready
+        <span id="header-radar" class="px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-full text-xs font-mono flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span id="radar-latency">Online</span>
         </span>
+        <button onclick="downloadConfigBackup()" class="px-3 py-1.5 rounded-lg border border-border text-xs text-zinc-300 hover:bg-zinc-800 transition flex items-center gap-1.5" title="Export clean JSON backup of configuration & combos">
+          <i data-lucide="download" class="w-3.5 h-3.5"></i> Backup
+        </button>
         <a href="/health" target="_blank" class="px-3 py-1.5 rounded-lg border border-border text-xs text-zinc-300 hover:bg-zinc-800 transition">
           /health
         </a>
@@ -164,16 +171,26 @@
 
       <!-- Recent Requests Table (OmniRoute Style) -->
       <div class="bg-card border border-border rounded-xl p-6 space-y-4">
-        <div class="flex items-center justify-between">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 class="font-semibold text-base text-zinc-100 flex items-center gap-2">
               <i data-lucide="activity" class="w-4 h-4 text-emerald-400"></i> Recent Requests
             </h2>
-            <p class="text-xs text-muted mt-0.5">Live completions and streams through /v1/chat/completions and /v1/messages</p>
+            <p class="text-xs text-muted mt-0.5">Click any row to inspect prompt preview, response tokens, and diagnostics</p>
           </div>
-          <span class="text-[11px] text-muted font-mono flex items-center gap-1.5">
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> polling 2.5s
-          </span>
+          <div class="flex items-center gap-2 flex-wrap">
+            <div class="flex items-center bg-zinc-900 border border-border rounded-lg p-0.5 text-xs font-mono">
+              <button onclick="setRequestsFilter('all')" id="rf-all" class="px-2.5 py-1 rounded bg-zinc-800 text-zinc-200 font-semibold transition">All</button>
+              <button onclick="setRequestsFilter('ok')" id="rf-ok" class="px-2.5 py-1 rounded text-muted hover:text-zinc-200 transition">OK</button>
+              <button onclick="setRequestsFilter('error')" id="rf-error" class="px-2.5 py-1 rounded text-muted hover:text-rose-400 transition">Errors</button>
+            </div>
+            <button onclick="clearRecentRequests()" class="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 text-muted hover:text-zinc-200 border border-border rounded-lg text-xs transition flex items-center gap-1" title="Clear request history">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Clear
+            </button>
+            <span class="text-[11px] text-muted font-mono flex items-center gap-1.5 ml-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> polling
+            </span>
+          </div>
         </div>
 
         <div class="overflow-x-auto">
@@ -325,6 +342,256 @@
       </div>
     </section>
 
+    <!-- Tab: Connect Tools (OmniRoute / 9Router One-Click Setup) -->
+    <section id="tab-connect" class="p-8 space-y-6 hidden">
+      <!-- Universal Quick Connect Card -->
+      <div class="bg-gradient-to-r from-blue-950/40 via-card to-zinc-900 border border-blue-500/30 rounded-xl p-6 space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono bg-blue-500/10 text-blue-400 border border-blue-500/20 mb-2">
+              <i data-lucide="zap" class="w-3 h-3"></i> Universal Drop-In API
+            </div>
+            <h2 class="font-bold text-lg text-zinc-100">Connect Any AI Tool to KiteRouter</h2>
+            <p class="text-xs text-muted mt-1 max-w-2xl">
+              KiteRouter provides 100% standard OpenAI and Anthropic compatible endpoints. Point any code editor, terminal CLI, or agent to local port 3001.
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="px-3 py-1.5 bg-zinc-900/90 border border-border rounded-lg text-xs font-mono text-zinc-300">
+              Host: <span class="text-emerald-400">127.0.0.1:3001</span>
+            </span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+          <div class="p-3 bg-zinc-950/80 border border-border/80 rounded-lg flex items-center justify-between">
+            <div>
+              <div class="text-[10px] text-muted uppercase font-mono">OpenAI Base URL</div>
+              <div class="text-xs font-mono font-semibold text-zinc-200 mt-0.5">http://127.0.0.1:3001/v1</div>
+            </div>
+            <button onclick="copySnippet('http://127.0.0.1:3001/v1', this)" class="p-1.5 text-muted hover:text-zinc-200 rounded hover:bg-zinc-800 transition" title="Copy Base URL">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+          <div class="p-3 bg-zinc-950/80 border border-border/80 rounded-lg flex items-center justify-between">
+            <div>
+              <div class="text-[10px] text-muted uppercase font-mono">API Key</div>
+              <div class="text-xs font-mono font-semibold text-zinc-200 mt-0.5">kiterouter</div>
+            </div>
+            <button onclick="copySnippet('kiterouter', this)" class="p-1.5 text-muted hover:text-zinc-200 rounded hover:bg-zinc-800 transition" title="Copy API Key">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+          <div class="p-3 bg-zinc-950/80 border border-border/80 rounded-lg flex items-center justify-between">
+            <div>
+              <div class="text-[10px] text-muted uppercase font-mono">Smart Model (Zero-Config)</div>
+              <div class="text-xs font-mono font-semibold text-emerald-400 mt-0.5">auto</div>
+            </div>
+            <button onclick="copySnippet('auto', this)" class="p-1.5 text-muted hover:text-zinc-200 rounded hover:bg-zinc-800 transition" title="Copy Model">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tool Guides Grid -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <!-- 1. Cursor IDE -->
+        <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-7 h-7 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 font-bold text-xs font-mono">
+                Cu
+              </div>
+              <div>
+                <h3 class="font-semibold text-sm text-zinc-100">Cursor IDE</h3>
+                <p class="text-[11px] text-muted">Cursor Settings → Models → OpenAI API</p>
+              </div>
+            </div>
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Drop-in</span>
+          </div>
+          <p class="text-xs text-zinc-400 leading-relaxed">
+            In Cursor Settings, enable <b>OpenAI API Key</b>, click <b>Override OpenAI Base URL</b>, and enter:
+          </p>
+          <div class="bg-zinc-950 border border-border rounded-lg p-2.5 text-xs font-mono flex items-center justify-between">
+            <span class="text-zinc-300">Base URL: <span class="text-blue-400">http://127.0.0.1:3001/v1</span></span>
+            <button onclick="copySnippet('http://127.0.0.1:3001/v1', this)" class="text-muted hover:text-zinc-200"><i data-lucide="copy" class="w-3.5 h-3.5"></i></button>
+          </div>
+          <div class="bg-zinc-950 border border-border rounded-lg p-2.5 text-xs font-mono flex items-center justify-between">
+            <span class="text-zinc-300">API Key: <span class="text-blue-400">kiterouter</span></span>
+            <button onclick="copySnippet('kiterouter', this)" class="text-muted hover:text-zinc-200"><i data-lucide="copy" class="w-3.5 h-3.5"></i></button>
+          </div>
+          <div class="text-[11px] text-muted">Recommended models: <code class="text-zinc-300 bg-zinc-900 px-1 py-0.5 rounded">auto</code>, <code class="text-zinc-300 bg-zinc-900 px-1 py-0.5 rounded">combo/Own</code>, <code class="text-zinc-300 bg-zinc-900 px-1 py-0.5 rounded">opencode_go/deepseek-flash</code></div>
+        </div>
+
+        <!-- 2. Claude Code CLI -->
+        <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-7 h-7 rounded-lg bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-400 font-bold text-xs font-mono">
+                Cl
+              </div>
+              <div>
+                <h3 class="font-semibold text-sm text-zinc-100">Claude Code CLI</h3>
+                <p class="text-[11px] text-muted">Anthropic official CLI proxy</p>
+              </div>
+            </div>
+            <button onclick="copySnippet('export ANTHROPIC_BASE_URL=\"http://127.0.0.1:3001/v1\"\nexport ANTHROPIC_API_KEY=\"kiterouter\"\nclaude --model auto', this)" class="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 border border-border px-2 py-1 rounded">
+              <i data-lucide="copy" class="w-3 h-3"></i> Copy
+            </button>
+          </div>
+          <p class="text-xs text-zinc-400 leading-relaxed">
+            Run Claude Code with KiteRouter's zero-config auto routing:
+          </p>
+          <pre class="bg-zinc-950 border border-border rounded-lg p-2.5 text-xs font-mono text-zinc-300 overflow-x-auto">export ANTHROPIC_BASE_URL="http://127.0.0.1:3001/v1"
+export ANTHROPIC_API_KEY="kiterouter"
+claude --model auto</pre>
+        </div>
+
+        <!-- 3. Cline / Roo Code -->
+        <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 font-bold text-xs font-mono">
+                Cn
+              </div>
+              <div>
+                <h3 class="font-semibold text-sm text-zinc-100">Cline / Roo Code</h3>
+                <p class="text-[11px] text-muted">VS Code autonomous coding extension</p>
+              </div>
+            </div>
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">OpenAI Compatible</span>
+          </div>
+          <div class="space-y-1.5 text-xs text-zinc-400">
+            <div>1. In Cline Settings, set Provider to: <b class="text-zinc-200">OpenAI Compatible</b></div>
+            <div>2. Base URL: <code class="text-blue-400 bg-zinc-950 px-1.5 py-0.5 rounded border border-border">http://127.0.0.1:3001/v1</code></div>
+            <div>3. API Key: <code class="text-zinc-200 bg-zinc-950 px-1.5 py-0.5 rounded border border-border">kiterouter</code></div>
+            <div>4. Model ID: <code class="text-emerald-400 bg-zinc-950 px-1.5 py-0.5 rounded border border-border">auto</code> or <code class="text-zinc-300 bg-zinc-950 px-1.5 py-0.5 rounded border border-border">combo/Own</code></div>
+          </div>
+        </div>
+
+        <!-- 4. OpenCode CLI -->
+        <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-7 h-7 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 font-bold text-xs font-mono">
+                Oc
+              </div>
+              <div>
+                <h3 class="font-semibold text-sm text-zinc-100">OpenCode CLI</h3>
+                <p class="text-[11px] text-muted">~/.config/opencode/opencode.json</p>
+              </div>
+            </div>
+            <button onclick="copySnippet('{\n  \"model\": \"kiterouter/auto\",\n  \"providers\": {\n    \"kiterouter\": {\n      \"baseURL\": \"http://127.0.0.1:3001/v1\",\n      \"apiKey\": \"kiterouter\"\n    }\n  }\n}', this)" class="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 border border-border px-2 py-1 rounded">
+              <i data-lucide="copy" class="w-3 h-3"></i> Copy JSON
+            </button>
+          </div>
+          <pre class="bg-zinc-950 border border-border rounded-lg p-2.5 text-xs font-mono text-zinc-300 overflow-x-auto">{
+  "model": "kiterouter/auto",
+  "providers": {
+    "kiterouter": {
+      "baseURL": "http://127.0.0.1:3001/v1",
+      "apiKey": "kiterouter"
+    }
+  }
+}</pre>
+        </div>
+
+        <!-- 5. Continue.dev -->
+        <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-7 h-7 rounded-lg bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-400 font-bold text-xs font-mono">
+                Ct
+              </div>
+              <div>
+                <h3 class="font-semibold text-sm text-zinc-100">Continue.dev</h3>
+                <p class="text-[11px] text-muted">~/.continue/config.json</p>
+              </div>
+            </div>
+            <button onclick="copySnippet('{\n  \"title\": \"KiteRouter\",\n  \"provider\": \"openai\",\n  \"model\": \"auto\",\n  \"apiBase\": \"http://127.0.0.1:3001/v1\",\n  \"apiKey\": \"kiterouter\"\n}', this)" class="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 border border-border px-2 py-1 rounded">
+              <i data-lucide="copy" class="w-3 h-3"></i> Copy
+            </button>
+          </div>
+          <pre class="bg-zinc-950 border border-border rounded-lg p-2.5 text-xs font-mono text-zinc-300 overflow-x-auto">{
+  "title": "KiteRouter",
+  "provider": "openai",
+  "model": "auto",
+  "apiBase": "http://127.0.0.1:3001/v1",
+  "apiKey": "kiterouter"
+}</pre>
+        </div>
+
+        <!-- 6. Aider CLI -->
+        <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 font-bold text-xs font-mono">
+                Ai
+              </div>
+              <div>
+                <h3 class="font-semibold text-sm text-zinc-100">Aider CLI</h3>
+                <p class="text-[11px] text-muted">Terminal pair programming</p>
+              </div>
+            </div>
+            <button onclick="copySnippet('export OPENAI_API_BASE=\"http://127.0.0.1:3001/v1\"\nexport OPENAI_API_KEY=\"kiterouter\"\naider --model openai/auto', this)" class="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 border border-border px-2 py-1 rounded">
+              <i data-lucide="copy" class="w-3 h-3"></i> Copy
+            </button>
+          </div>
+          <pre class="bg-zinc-950 border border-border rounded-lg p-2.5 text-xs font-mono text-zinc-300 overflow-x-auto">export OPENAI_API_BASE="http://127.0.0.1:3001/v1"
+export OPENAI_API_KEY="kiterouter"
+aider --model openai/auto</pre>
+        </div>
+
+        <!-- 7. Python SDK / OpenAI -->
+        <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 font-bold text-xs font-mono">
+                Py
+              </div>
+              <div>
+                <h3 class="font-semibold text-sm text-zinc-100">Python (OpenAI SDK)</h3>
+                <p class="text-[11px] text-muted">Standard client script</p>
+              </div>
+            </div>
+            <button onclick="copySnippet('from openai import OpenAI\n\nclient = OpenAI(base_url=\"http://127.0.0.1:3001/v1\", api_key=\"kiterouter\")\nres = client.chat.completions.create(\n    model=\"auto\",\n    messages=[{\"role\": \"user\", \"content\": \"Hello!\"}]\n)\nprint(res.choices[0].message.content)', this)" class="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 border border-border px-2 py-1 rounded">
+              <i data-lucide="copy" class="w-3 h-3"></i> Copy
+            </button>
+          </div>
+          <pre class="bg-zinc-950 border border-border rounded-lg p-2.5 text-xs font-mono text-zinc-300 overflow-x-auto">from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:3001/v1", api_key="kiterouter")
+res = client.chat.completions.create(
+    model="auto",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+print(res.choices[0].message.content)</pre>
+        </div>
+
+        <!-- 8. cURL / Raw API -->
+        <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-7 h-7 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 font-bold text-xs font-mono">
+                cL
+              </div>
+              <div>
+                <h3 class="font-semibold text-sm text-zinc-100">cURL / Shell</h3>
+                <p class="text-[11px] text-muted">One-liner test</p>
+              </div>
+            </div>
+            <button onclick="copySnippet('curl -s http://127.0.0.1:3001/v1/chat/completions \\\n  -H \"Content-Type: application/json\" \\\n  -d \'{\"model\": \"auto\", \"messages\": [{\"role\": \"user\", \"content\": \"Hi\"}]}\'', this)" class="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 border border-border px-2 py-1 rounded">
+              <i data-lucide="copy" class="w-3 h-3"></i> Copy
+            </button>
+          </div>
+          <pre class="bg-zinc-950 border border-border rounded-lg p-2.5 text-xs font-mono text-zinc-300 overflow-x-auto">curl -s http://127.0.0.1:3001/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "auto", "messages": [{"role": "user", "content": "Hi"}]}'</pre>
+        </div>
+      </div>
+    </section>
+
     <!-- Tab 3: Test Playground -->
     <section id="tab-playground" class="p-8 space-y-6 hidden">
       <div class="bg-card border border-border rounded-xl p-6 space-y-4 max-w-2xl">
@@ -428,6 +695,87 @@
         </div>
       </div>
     </div>
+
+    <!-- Request Inspector Drawer/Modal -->
+    <div id="inspector-modal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+      <div class="bg-zinc-900 border border-border rounded-xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div class="p-5 border-b border-border flex items-center justify-between bg-zinc-900/90">
+          <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+              <i data-lucide="search" class="w-4 h-4"></i>
+            </div>
+            <div>
+              <h3 class="text-sm font-bold text-zinc-100 flex items-center gap-2">
+                Request Inspector <span id="insp-id" class="text-xs font-mono text-muted"></span>
+              </h3>
+              <div id="insp-time" class="text-[10px] text-muted font-mono"></div>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="copyInspCurl()" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-border rounded-lg text-xs transition flex items-center gap-1.5" title="Copy as cURL command">
+              <i data-lucide="terminal" class="w-3.5 h-3.5"></i> Copy cURL
+            </button>
+            <button onclick="closeInspectorModal()" class="p-1 text-muted hover:text-zinc-200 rounded-lg hover:bg-zinc-800 transition">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="p-5 space-y-4 overflow-y-auto flex-1">
+          <!-- Overview Badges -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div class="p-3 bg-zinc-950 border border-border/80 rounded-lg">
+              <div class="text-[10px] text-muted uppercase tracking-wider font-mono">Status</div>
+              <div id="insp-status" class="text-xs font-bold mt-1 font-mono"></div>
+            </div>
+            <div class="p-3 bg-zinc-950 border border-border/80 rounded-lg">
+              <div class="text-[10px] text-muted uppercase tracking-wider font-mono">Latency</div>
+              <div id="insp-latency" class="text-xs font-bold mt-1 font-mono text-blue-400"></div>
+            </div>
+            <div class="p-3 bg-zinc-950 border border-border/80 rounded-lg">
+              <div class="text-[10px] text-muted uppercase tracking-wider font-mono">Tokens In / Out</div>
+              <div id="insp-tokens" class="text-xs font-bold mt-1 font-mono text-zinc-200"></div>
+            </div>
+            <div class="p-3 bg-zinc-950 border border-border/80 rounded-lg">
+              <div class="text-[10px] text-muted uppercase tracking-wider font-mono">RTK Saved</div>
+              <div id="insp-saved" class="text-xs font-bold mt-1 font-mono text-emerald-400"></div>
+            </div>
+          </div>
+
+          <!-- Model & Provider -->
+          <div class="p-3 bg-zinc-950 border border-border/80 rounded-lg space-y-1.5 font-mono text-xs">
+            <div class="flex items-center justify-between">
+              <span class="text-muted text-[11px]">Requested Model:</span>
+              <span id="insp-model" class="text-zinc-200 font-semibold"></span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-muted text-[11px]">Routed Provider:</span>
+              <span id="insp-provider" class="text-blue-400"></span>
+            </div>
+          </div>
+
+          <!-- Error Details (if present) -->
+          <div id="insp-error-box" class="hidden p-3 bg-rose-950/40 border border-rose-500/30 rounded-lg space-y-1">
+            <div class="text-xs font-bold text-rose-400 flex items-center gap-1.5">
+              <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i> Upstream Error Diagnostic:
+            </div>
+            <div id="insp-error-text" class="text-xs font-mono text-rose-200 whitespace-pre-wrap break-all max-h-36 overflow-y-auto"></div>
+          </div>
+
+          <!-- Prompt Preview -->
+          <div>
+            <label class="text-xs font-semibold text-zinc-300 block mb-1">Prompt Context Preview</label>
+            <div id="insp-prompt" class="p-3 bg-zinc-950 border border-border rounded-lg text-xs font-mono text-zinc-300 max-h-36 overflow-y-auto whitespace-pre-wrap break-words"></div>
+          </div>
+
+          <!-- Response Preview -->
+          <div>
+            <label class="text-xs font-semibold text-zinc-300 block mb-1">Response Output Preview</label>
+            <div id="insp-response" class="p-3 bg-zinc-950 border border-border rounded-lg text-xs font-mono text-emerald-300 max-h-48 overflow-y-auto whitespace-pre-wrap break-words"></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </main>
 
   <script>
@@ -461,19 +809,51 @@
     let latestRecentRequests = [];
     let isUserTyping = false;
     let modelSearchQuery = {};
+    let currentRequestsFilter = 'all';
+    let selectedRequestForInsp = null;
 
     function switchTab(tabId) {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       const activeBtn = document.getElementById('tab-btn-' + tabId);
       if (activeBtn) activeBtn.classList.add('active');
-      ['overview', 'providers', 'combos', 'playground'].forEach(t => {
+      ['overview', 'providers', 'combos', 'connect', 'playground'].forEach(t => {
         const sec = document.getElementById('tab-' + t);
         if (sec) sec.classList.toggle('hidden', t !== tabId);
       });
       const pt = document.getElementById('page-title');
-      if (pt) pt.innerText = tabId.charAt(0).toUpperCase() + tabId.slice(1);
+      if (pt) {
+        if (tabId === 'connect') pt.innerText = 'Connect Tools';
+        else if (tabId === 'playground') pt.innerText = 'Test Playground';
+        else pt.innerText = tabId.charAt(0).toUpperCase() + tabId.slice(1);
+      }
       if (tabId === 'combos') {
         loadCombosData();
+      }
+    }
+
+    function setRequestsFilter(filter) {
+      currentRequestsFilter = filter;
+      ['all', 'ok', 'error'].forEach(f => {
+        const btn = document.getElementById('rf-' + f);
+        if (btn) {
+          if (f === filter) {
+            btn.className = 'px-2.5 py-1 rounded bg-zinc-800 text-zinc-200 font-semibold transition';
+          } else {
+            btn.className = 'px-2.5 py-1 rounded text-muted hover:text-zinc-200 transition';
+          }
+        }
+      });
+      renderRecentRequests(latestRecentRequests);
+    }
+
+    async function clearRecentRequests() {
+      if (!confirm("Clear all recent request history?")) return;
+      try {
+        await fetch('/api/recent-requests', { method: 'DELETE' });
+        latestRecentRequests = [];
+        renderRecentRequests([]);
+      } catch (e) {
+        console.error("Failed to clear requests", e);
       }
     }
 
@@ -545,25 +925,32 @@
       const tbody = document.getElementById('recent-requests-body');
       if (!tbody) return;
 
-      if (!requests || requests.length === 0) {
+      let filtered = requests || [];
+      if (currentRequestsFilter === 'ok') {
+        filtered = filtered.filter(r => r.status === 'ok');
+      } else if (currentRequestsFilter === 'error') {
+        filtered = filtered.filter(r => r.status !== 'ok');
+      }
+
+      if (filtered.length === 0) {
         tbody.innerHTML = `
           <tr>
             <td colspan="6" class="py-6 text-center text-zinc-500 font-sans">
-              No recent requests recorded yet. Test a model in Playground or run Test All Models!
+              ${requests && requests.length > 0 ? 'No requests match the selected filter.' : 'No recent requests recorded yet. Test a model in Playground or connect your IDE!'}
             </td>
           </tr>
         `;
         return;
       }
 
-      tbody.innerHTML = requests.map(r => {
+      tbody.innerHTML = filtered.map(r => {
         const isOk = r.status === 'ok';
         const statusBadge = isOk
           ? `<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">200 OK</span>`
           : `<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-rose-500/10 text-rose-400 border border-rose-500/20" title="${escapeHtml(r.error || 'Error')}">ERR</span>`;
         
         return `
-          <tr class="hover:bg-zinc-900/50 transition">
+          <tr class="hover:bg-zinc-800/60 cursor-pointer transition" onclick="inspectRequest('${escapeHtml(r.id)}')">
             <td class="py-2.5 font-medium text-zinc-200 max-w-[200px] truncate" title="${escapeHtml(r.model || '')}">
               ${escapeHtml(r.model || 'unknown')}
             </td>
@@ -575,7 +962,7 @@
             <td class="py-2.5 text-zinc-400">
               ${formatTokens(r.tokens_in, r.tokens_out)}
             </td>
-            <td class="py-2.5 text-zinc-400">
+            <td class="py-2.5 text-zinc-400 font-mono">
               ${r.latency_ms != null ? r.latency_ms + 'ms' : '-'}
             </td>
             <td class="py-2.5">
@@ -587,6 +974,95 @@
           </tr>
         `;
       }).join('');
+    }
+
+    function inspectRequest(reqId) {
+      const r = (latestRecentRequests || []).find(x => x.id === reqId);
+      if (!r) return;
+      selectedRequestForInsp = r;
+
+      const modal = document.getElementById('inspector-modal');
+      document.getElementById('insp-id').innerText = r.id;
+      document.getElementById('insp-time').innerText = new Date(r.timestamp * 1000).toLocaleString();
+
+      const statusEl = document.getElementById('insp-status');
+      if (r.status === 'ok') {
+        statusEl.innerHTML = '<span class="text-emerald-400">200 OK</span>';
+      } else {
+        statusEl.innerHTML = '<span class="text-rose-400">ERROR</span>';
+      }
+
+      document.getElementById('insp-latency').innerText = (r.latency_ms != null ? r.latency_ms + ' ms' : '-');
+      document.getElementById('insp-tokens').innerText = `${r.tokens_in || 0} in / ${r.tokens_out || 0} out`;
+      document.getElementById('insp-saved').innerText = (r.tokens_saved || 0) + ' tokens';
+
+      document.getElementById('insp-model').innerText = r.model || '-';
+      document.getElementById('insp-provider').innerText = r.provider || '-';
+
+      const errBox = document.getElementById('insp-error-box');
+      const errText = document.getElementById('insp-error-text');
+      if (r.status !== 'ok' && r.error) {
+        errBox.classList.remove('hidden');
+        errText.innerText = r.error;
+      } else {
+        errBox.classList.add('hidden');
+        errText.innerText = '';
+      }
+
+      const promptEl = document.getElementById('insp-prompt');
+      promptEl.innerText = r.prompt_preview || '(No prompt preview captured)';
+
+      const respEl = document.getElementById('insp-response');
+      respEl.innerText = r.response_preview || (r.status === 'ok' ? '(Stream finished successfully)' : '(Failed before response stream)');
+
+      modal.classList.remove('hidden');
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function closeInspectorModal() {
+      const modal = document.getElementById('inspector-modal');
+      if (modal) modal.classList.add('hidden');
+      selectedRequestForInsp = null;
+    }
+
+    function copyInspCurl() {
+      if (!selectedRequestForInsp) return;
+      const r = selectedRequestForInsp;
+      const model = r.model || 'auto';
+      const prompt = (r.prompt_preview || 'Hello!').replace(/'/g, "'\\''");
+      const curl = `curl -s http://127.0.0.1:3001/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${model}", "messages": [{"role": "user", "content": "${prompt}"}]}'`;
+      navigator.clipboard.writeText(curl).then(() => {
+        alert("cURL command copied to clipboard!");
+      });
+    }
+
+    function copySnippet(text, btnElement) {
+      navigator.clipboard.writeText(text).then(() => {
+        const original = btnElement.innerHTML;
+        btnElement.innerHTML = '<i data-lucide="check" class="w-3.5 h-3.5 text-emerald-400"></i>';
+        if (window.lucide) lucide.createIcons();
+        setTimeout(() => {
+          btnElement.innerHTML = original;
+          if (window.lucide) lucide.createIcons();
+        }, 1500);
+      });
+    }
+
+    function downloadConfigBackup() {
+      window.location.href = '/api/config/backup';
+    }
+
+    async function pingGatewayRadar() {
+      const start = performance.now();
+      try {
+        const res = await fetch('/health');
+        const lat = Math.round(performance.now() - start);
+        const latEl = document.getElementById('radar-latency');
+        if (latEl) latEl.innerText = `${lat}ms`;
+      } catch (e) {
+        const latEl = document.getElementById('radar-latency');
+        if (latEl) latEl.innerText = `Offline`;
+      }
     }
 
     function renderTopology(providers, recentRequests) {
@@ -1644,8 +2120,10 @@
       loadData();
       fetchRecentRequests();
       populateModelDatalist();
+      pingGatewayRadar();
       setInterval(loadData, 5000);
       setInterval(fetchRecentRequests, 2500);
+      setInterval(pingGatewayRadar, 4000);
     });
   </script>
 </body>

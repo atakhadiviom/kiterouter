@@ -584,7 +584,23 @@ class TokenFetcher:
             if p in r9:
                 return r9[p]
             omni = TokenFetcher.fetch_from_omniroute(p)
-            return omni.get(p, {})
+            if p in omni:
+                return omni[p]
+
+            # Environment variable fallback
+            env_map = {
+                "groq": "GROQ_API_KEY",
+                "deepseek": "DEEPSEEK_API_KEY",
+                "openrouter": "OPENROUTER_API_KEY",
+                "gemini": "GEMINI_API_KEY",
+                "mistral": "MISTRAL_API_KEY",
+                "openai": "OPENAI_API_KEY",
+                "anthropic": "ANTHROPIC_API_KEY",
+            }
+            env_var = env_map.get(p)
+            if env_var and os.environ.get(env_var):
+                return {"api_key": os.environ[env_var].strip(), "source": f"env:{env_var}"}
+            return {}
 
     @staticmethod
     def fetch_all() -> Dict[str, Dict[str, Any]]:

@@ -91,8 +91,19 @@ Fetches catalogs for every enabled provider.
 Run **real** completions. Results are persisted and surfaced as pass/fail with the actual upstream error text — the dashboard never shows "working" from configuration presence alone.
 
 ### `GET /api/recent-requests`
+Feeds the dashboard's Recent Requests table (model, tokens in/out, latency, status, prompt preview, response preview, tokens saved).
 
-Feeds the dashboard's Recent Requests table (model, tokens in/out, latency, status).
+### `DELETE /api/recent-requests`
+Clears request execution logs from memory and disk.
+
+### `GET /api/stats`
+Returns aggregated operational telemetry: total requests, success rate percentage, tokens in/out, tokens saved via RTK compression, and average latency.
+
+### `GET /api/config/backup`
+Downloads a clean JSON backup file containing all configured providers, models, and combo chains.
+
+### `POST /api/config/restore`
+Restores providers, combos, and gateway settings from a JSON payload.
 
 ### `GET /health`
 

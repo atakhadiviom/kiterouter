@@ -52,6 +52,29 @@ KiteRouter Combos group multiple AI models into a unified virtual model with aut
 - **Client Invocations**: Use `combo/<name>` or `<name>` directly in any OpenAI-compatible client.
 - **Management & Discovery**: Visual chain builder on the Dashboard (`/dashboard`), 1-click import from 9Router, and model dropdown in the Test Playground.
 
+## Zero-config smart routing (`auto`)
+
+Point any AI tool at `http://127.0.0.1:3001/v1` and request `model: "auto"` or `model: "default"`. KiteRouter automatically selects the highest-priority working provider and falls over transparently if rate limits, auth expired, or quota exhaustion occur.
+
+## Connect developer tools in 1 click
+
+The dashboard's **Connect Tools** tab provides copyable drop-in configurations for:
+- **Cursor IDE** (OpenAI compatible override)
+- **Claude Code CLI** (`ANTHROPIC_BASE_URL="http://127.0.0.1:3001/v1"`)
+- **Cline & Roo Code**
+- **OpenCode CLI** (`~/.config/opencode/opencode.json`)
+- **Continue.dev** (`~/.continue/config.json`)
+- **Aider CLI** (`OPENAI_API_BASE="http://127.0.0.1:3001/v1"`)
+- **Python OpenAI SDK**
+
+## Live request inspector
+
+Clicking any row in the Recent Requests table opens a comprehensive Request Inspector modal featuring:
+- Exact prompt & response previews
+- Token metrics (prompt tokens, completion tokens, RTK tokens saved)
+- Upstream error diagnostics
+- One-click **Copy as cURL** command to replay requests in the terminal
+
 ## Import policy (only what works)
 
 Credentials imported from OmniRoute (`~/.omniroute/storage.sqlite`, read-only SQLite) or 9Router (`~/.9router/db/data.sqlite`) are decrypted locally with OmniRoute's own `STORAGE_ENCRYPTION_KEY` (AES-256-GCM, `enc:v1:` envelopes) and validated before import:
