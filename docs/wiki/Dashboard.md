@@ -2,7 +2,19 @@
 
 Zero build — one static file (`src/kiterouter/static/dashboard.html`) served at `/dashboard`. No npm, no bundler; changes go live on reload.
 
-## Tabs
+## Icon rail (navigation)
+
+The left rail is **icon-only** and carries every feature KiteRouter intends to have, not just the ones that work today. It mirrors the page set of OmniRoute 3.8.50 (55 pages) plus KiteRouter's own `overview` and `connect` — **57 entries**, grouped by area with dividers between groups.
+
+- Hover (or keyboard-focus) any icon for a tooltip showing the feature name, its group, and `planned` when it is not built yet.
+- **Green dot** = implemented. **Amber dot** = planned only. The rail never implies a feature exists when it does not.
+- The rail is **generated from a single `FEATURES` registry** in the dashboard script — adding a feature is one entry, and the rail, tooltips, page title and stub panel all follow from it. There is deliberately no hand-written button list to drift out of sync.
+
+### Opening a planned feature
+
+Planned entries open a **plan + status panel** stating plainly that it is not implemented, then showing what it will do, the OmniRoute behaviour it is based on, and its definition of done as a checklist. Panels are created on first visit rather than shipping 52 empty sections.
+
+### Built today (5)
 
 1. **Provider Topology (Overview)** — overview with Active / Recent / Error states plus a **Recent Requests** table (Model, In/Out tokens, Latency, Status, When) with:
    - Filter pills (`All`, `200 OK`, `Errors`)
@@ -14,6 +26,14 @@ Zero build — one static file (`src/kiterouter/static/dashboard.html`) served a
 3. **Combos** — visual management of multi-model routing chains with priority fallback, round-robin load balancing, or random pooling. Allows creating, editing, testing, and 1-click importing from 9Router.
 4. **Connect Tools** — copyable drop-in setup guides and configurations for Cursor IDE, Claude Code CLI, Cline & Roo Code, OpenCode CLI, Continue.dev, Aider CLI, and Python OpenAI SDK.
 5. **Playground** — model picker populated from imported/fetched models (including all defined combos and smart `auto`) with a provider filter; value is sent verbatim (prefix intact); output streams live and upstream errors render as errors.
+
+### Planned (52)
+
+Auto-Combo, Routing, Conductor, Resilience, Limits, Quota, Endpoint, API Endpoints, Analytics, Activity, Audit, Costs, Health, Logs, Provider Stats, Runtime, System, Tokens, Usage, Cache, Compression, Context, Conversations, Memory, Translator, Discovery, Free Tiers, Free Rankings, Media Providers, API Manager, A2A Protocol, ACP Agents, Agent Skills, CLI Agents, CLI Code, Cloud Agents, MCP Server, Omni Skills, Search Tools, Tools, Batch, Changelog, Chaos, Gamification, Leaderboard, Onboarding, Plugins, Profile, Radar, Relay, Settings, Webhooks.
+
+The order they get built in, the reasons, and the one open question (whether to add a local SQLite store for history) are recorded in the plan at `~/.commandcode/plans/kiterouter-omniroute-parity-nav.md`.
+
+`tests/test_dashboard_nav.py` guards the rail and registry offline: entry count, unique ids, required fields, live entries having a real section, planned entries *not* having one, every planned feature documenting itself, coverage of every OmniRoute page, and every icon name being one validated against lucide.
 
 ## Header Features
 - **Online Radar**: Real-time periodic latency ping to `127.0.0.1:3001` with status indicator.

@@ -1,8 +1,24 @@
 """Tests for all 13 providers and configuration endpoints."""
 import pytest
+from unittest.mock import AsyncMock, patch
+
 from kiterouter.config import KiteConfig
+from kiterouter.providers.opencode_free import OpenCodeFreeProvider
 from kiterouter.router import ProviderRouter as KiteRouter, ProviderRouter
 from kiterouter.providers.base import BaseProvider
+
+# Stubbed upstream completion: these endpoint tests are about gateway behaviour,
+# not upstream latency. Left live, the suite ranged from 3s to 5 minutes.
+FAKE_COMPLETION = {
+    "id": "chatcmpl-test",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "test-model",
+    "choices": [
+        {"index": 0, "message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}
+    ],
+    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+}
 
 
 def test_all_13_providers_registered():
@@ -71,6 +87,10 @@ def test_prefix_routing_for_providers():
 
 
 @pytest.mark.asyncio
+@patch.object(
+    OpenCodeFreeProvider, "fetch_models", AsyncMock(return_value=["model-a", "model-b"])
+)
+@patch.object(OpenCodeFreeProvider, "chat_complete", AsyncMock(return_value=FAKE_COMPLETION))
 async def test_config_api_endpoints():
     from httpx import AsyncClient, ASGITransport
     from kiterouter.server import app

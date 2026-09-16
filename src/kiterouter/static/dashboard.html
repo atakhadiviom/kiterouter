@@ -28,47 +28,44 @@
   <style>
     body { background-color: #09090b; color: #f4f4f5; font-family: ui-sans-serif, system-ui, sans-serif; }
     .tab-btn.active { background-color: #27272a; color: #ffffff; font-weight: 600; }
+    .rail-btn { position: relative; }
+    .rail-btn.active { background-color: #27272a; color: #ffffff; }
+    .rail-dot { position: absolute; top: 5px; right: 5px; width: 5px; height: 5px; border-radius: 9999px; }
+    .rail-sep { height: 1px; background: #27272a; margin: 6px 14px; }
+    #nav-rail { scrollbar-width: none; }
+    #nav-rail::-webkit-scrollbar { width: 0; display: none; }
   </style>
 </head>
 <body class="flex h-screen overflow-hidden text-sm">
 
-  <!-- Sidebar (FastAPI template / shadcn style) -->
-  <aside class="w-64 border-r border-border bg-card/40 flex flex-col justify-between shrink-0">
-    <div>
-      <div class="h-16 flex items-center px-6 border-b border-border gap-3">
-        <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white shadow-lg">🪁</div>
-        <div>
-          <div class="font-bold text-base leading-tight">KiteRouter</div>
-          <div class="text-[11px] text-muted font-mono">Port 3001 • RTK Active</div>
-        </div>
-      </div>
-
-      <nav class="p-4 space-y-1.5 font-medium">
-        <button onclick="switchTab('overview')" id="tab-btn-overview" class="tab-btn active w-full flex items-center gap-3 px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800/60 transition">
-          <i data-lucide="layout-dashboard" class="w-4 h-4"></i> Overview
-        </button>
-        <button onclick="switchTab('providers')" id="tab-btn-providers" class="tab-btn w-full flex items-center gap-3 px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800/60 transition">
-          <i data-lucide="cpu" class="w-4 h-4"></i> Providers
-        </button>
-        <button onclick="switchTab('combos')" id="tab-btn-combos" class="tab-btn w-full flex items-center gap-3 px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800/60 transition">
-          <i data-lucide="layers" class="w-4 h-4"></i> Combos
-        </button>
-        <button onclick="switchTab('connect')" id="tab-btn-connect" class="tab-btn w-full flex items-center gap-3 px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800/60 transition">
-          <i data-lucide="plug" class="w-4 h-4"></i> Connect Tools
-        </button>
-        <button onclick="switchTab('playground')" id="tab-btn-playground" class="tab-btn w-full flex items-center gap-3 px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800/60 transition">
-          <i data-lucide="terminal" class="w-4 h-4"></i> Test Playground
-        </button>
-      </nav>
+  <!-- Icon-only navigation rail — mirrors OmniRoute's dashboard page set.
+       Rendered from the FEATURES registry so adding a feature is one entry. -->
+  <aside class="w-14 border-r border-border bg-card/40 flex flex-col shrink-0">
+    <div class="h-16 flex items-center justify-center border-b border-border shrink-0">
+      <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white shadow-lg" title="KiteRouter · port 3001 · RTK active">🪁</div>
     </div>
 
-    <div class="p-4 border-t border-border space-y-2">
-      <div class="flex items-center justify-between text-xs text-muted">
-        <span>KiteRouter Gateway</span>
-        <span class="inline-flex items-center gap-1.5 text-emerald-400 font-mono">● 127.0.0.1:3001</span>
-      </div>
+    <nav id="nav-rail" class="flex-1 overflow-y-auto overflow-x-hidden py-2" aria-label="KiteRouter feature navigation">
+      <!-- Injected from FEATURES -->
+    </nav>
+
+    <div class="py-3 border-t border-border flex flex-col items-center gap-1 shrink-0">
+      <a href="/health" target="_blank" rel="noopener" aria-label="Health endpoint"
+         class="rail-btn w-10 h-10 rounded-lg flex items-center justify-center text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100 transition"
+         data-tip="Health · /health">
+        <i data-lucide="heart-pulse" class="w-4 h-4"></i>
+      </a>
+      <button onclick="downloadConfigBackup()" aria-label="Download configuration backup"
+              class="rail-btn w-10 h-10 rounded-lg flex items-center justify-center text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100 transition"
+              data-tip="Backup configuration">
+        <i data-lucide="download" class="w-4 h-4"></i>
+      </button>
+      <span class="w-2 h-2 mt-1 rounded-full bg-emerald-400" title="Gateway online — 127.0.0.1:3001"></span>
     </div>
   </aside>
+
+  <!-- Single fixed tooltip layer: avoided clipping inside the scrolling rail -->
+  <div id="rail-tooltip" class="hidden fixed z-[70] pointer-events-none -translate-y-1/2 bg-card border border-border text-zinc-100 text-[11px] px-2 py-1 rounded-md shadow-xl whitespace-nowrap"></div>
 
   <!-- Main Content Area -->
   <main class="flex-1 flex flex-col overflow-y-auto">
@@ -869,6 +866,351 @@ print(res.choices[0].message.content)</pre>
       { id: "custom", name: "Custom Provider", type: "OpenAI Compatible", desc: "Any custom endpoint and API key", fields: [{ key: "endpoint", label: "Base URL / Endpoint", placeholder: "https://my-api.com/v1/chat/completions" }, { key: "api_key", label: "API Key", placeholder: "sk-custom..." }] }
     ];
 
+    // ── Feature registry ───────────────────────────────────────────────────
+    // Mirrors OmniRoute's `(dashboard)/dashboard` page set (55 pages) plus
+    // KiteRouter's own overview + connect = 57 entries. This array is the
+    // single source of truth: the rail, tooltips, page titles and the stub
+    // panels all derive from it, and tests/test_dashboard_nav.py guards it.
+    //
+    //   status 'live'    → a real <section id="tab-<id>"> exists in this file
+    //   status 'planned' → renders a plan + status panel until it is built
+    //
+    // Icon names were validated against lucide's icon set; a typo renders a
+    // blank box, so the nav test pins them.
+    const FEATURES = [
+      // Core (built)
+      { id:'overview',    label:'Overview',      icon:'layout-dashboard', group:'Core', status:'live' },
+      { id:'providers',   label:'Providers',     icon:'cpu',              group:'Core', status:'live' },
+      { id:'combos',      label:'Combos',        icon:'layers',           group:'Core', status:'live' },
+      { id:'connect',     label:'Connect Tools', icon:'plug',             group:'Core', status:'live' },
+      { id:'playground',  label:'Playground',    icon:'terminal',         group:'Core', status:'live' },
+
+      // Routing & Resilience
+      { id:'auto-combo', label:'Auto-Combo', icon:'route', group:'Routing & Resilience', status:'planned',
+        summary:'Zero-config model that scores every connected provider live and builds a virtual combo on the fly — the equivalent of model "auto", not a hand-written chain.',
+        reference:'OmniRoute /dashboard/auto-combo + docs/routing/AUTO-COMBO.md; 15-factor scoring; variants auto/coding, auto/fast, auto/cheap, auto/offline, auto/smart; table auto_candidate_overrides',
+        checklist:['define the scoring factors (health, quota, cost, latency, task fit)','persist per-connection observations','expose the per-request score breakdown','tests + wiki sync'] },
+      { id:'routing', label:'Routing', icon:'git-branch', group:'Routing & Resilience', status:'planned',
+        summary:'Explain why each request went where it went — which candidate won, its score, and which fallbacks fired.',
+        reference:'OmniRoute routing_decisions (request_id, provider_selected, score, factors_json, fallbacks_triggered, cost)',
+        checklist:['record a decision row per request','surface the factor breakdown in the UI','replay a past decision','tests + wiki sync'] },
+      { id:'conductor', label:'Conductor', icon:'git-merge', group:'Routing & Resilience', status:'planned',
+        summary:'Orchestrate multi-step work across models — chain steps so one model output feeds the next.',
+        reference:'OmniRoute /dashboard/conductor and the pipeline combo strategy (each target output feeds the next)',
+        checklist:['define a step graph','run steps sequentially with fallback per step','show the run trace','tests + wiki sync'] },
+      { id:'resilience', label:'Resilience', icon:'shield-check', group:'Routing & Resilience', status:'planned',
+        summary:'Circuit breakers and cooldowns so a dead provider is skipped instead of retried on every request. Today failover is stateless.',
+        reference:'OmniRoute 3 independent layers + docs/architecture/RESILIENCE_GUIDE.md: provider breaker (CLOSED/OPEN/HALF_OPEN, trips on 408-5xx, thresholds by auth type), connection cooldown (exponential, honours Retry-After), per-model lockout; tables domain_circuit_breakers, connection_runtime_state',
+        checklist:['track consecutive failures per provider and per connection','implement cooldown with exponential backoff','skip OPEN providers in the routing candidate list','tests + wiki sync'] },
+      { id:'limits', label:'Limits', icon:'gauge', group:'Routing & Resilience', status:'planned',
+        summary:'Rate and token limits per key, account and model, with resets tracked rather than guessed.',
+        reference:'OmniRoute api_key_token_limits, provider_key_limits, account_key_limits, relay_rate_limits, api_key_token_counters',
+        checklist:['enforce request and token limits','track reset windows','report limit state honestly in the UI','tests + wiki sync'] },
+      { id:'quota', label:'Quota', icon:'pie-chart', group:'Routing & Resilience', status:'planned',
+        summary:'Remaining quota and the time it resets, per account — so an exhausted provider reads "exhausted until 14:00" instead of just "failing".',
+        reference:'OmniRoute /dashboard/quota; quota_snapshots (34,561 rows), provider_quota_state, provider_quota_reset_events, quota_pools/groups, provider_plans',
+        checklist:['read quota from provider responses','persist snapshots and reset windows','surface exhausted-until honestly','tests + wiki sync'] },
+      { id:'endpoint', label:'Endpoint', icon:'link', group:'Routing & Resilience', status:'planned',
+        summary:'The gateway own endpoint details — base URLs, compatible wire formats and copy-ready snippets.',
+        reference:'OmniRoute /dashboard/endpoint',
+        checklist:['list every exposed route and its wire format','show live base URLs','copy-ready client snippets','tests + wiki sync'] },
+      { id:'api-endpoints', label:'API Endpoints', icon:'network', group:'Routing & Resilience', status:'planned',
+        summary:'Browsable inventory of KiteRouter own HTTP surface, generated from the app so it cannot drift.',
+        reference:'OmniRoute /dashboard/api-endpoints (OpenAPI explorer)',
+        checklist:['enumerate routes from the FastAPI app','group by area with methods','link to /openapi.json','tests + wiki sync'] },
+
+      // Observability
+      { id:'analytics', label:'Analytics', icon:'bar-chart-3', group:'Observability', status:'planned',
+        summary:'Compression, routing and usage analytics in one place, with real numbers rather than estimates.',
+        reference:'OmniRoute compression_analytics, routing_decisions rollups, compression_engine_breakdown (38,578 rows)',
+        checklist:['decide the persistence layer first (see plan Wave 0)','aggregate by day, provider and model','chart savings and success rate','tests + wiki sync'] },
+      { id:'activity', label:'Activity', icon:'activity', group:'Observability', status:'planned',
+        summary:'Chronological feed of what the gateway actually did — requests, imports, tests, config changes.',
+        reference:'OmniRoute /dashboard/activity',
+        checklist:['record events with actor and outcome','paginate the feed','filter by type','tests + wiki sync'] },
+      { id:'audit', label:'Audit', icon:'clipboard-list', group:'Observability', status:'planned',
+        summary:'Who changed what, with before/after diffs for config and credential changes.',
+        reference:'OmniRoute audit_log (40 rows), config_audit_log (before_json/after_json/diff_json)',
+        checklist:['log config mutations with before/after','never log secret values','filter by resource and action','tests + wiki sync'] },
+      { id:'costs', label:'Costs', icon:'dollar-sign', group:'Observability', status:'planned',
+        summary:'Spend per key, provider and model over time, so free tiers and paid overflow are both visible.',
+        reference:'OmniRoute domain_cost_history (12,091 rows), daily_usage_summary, tier_assignments',
+        checklist:['capture per-request cost where the upstream reports it','roll up daily','flag free-tier vs paid usage','tests + wiki sync'] },
+      { id:'health', label:'Health', icon:'heart-pulse', group:'Observability', status:'planned',
+        summary:'Real health checks per connection on a schedule, distinct from a one-off manual test.',
+        reference:'OmniRoute /dashboard/health; provider_connections.health_check_interval, last_health_check_at, last_ping_at, consecutive_use_count',
+        checklist:['schedule per-connection checks (reuse the prober)','record last-check and outcome per account','separate health from quota state','tests + wiki sync'] },
+      { id:'logs', label:'Logs', icon:'scroll-text', group:'Observability', status:'planned',
+        summary:'Full request history with request/response bodies — today there is only a 100-entry ring buffer of 400-character previews.',
+        reference:'OmniRoute call_logs (18,025 rows) with artifact_relpath/sha256, request_detail_logs, log_export_destinations',
+        checklist:['decide the persistence layer first (see plan Wave 0)','store request and response bodies with size caps','search and filter by model, provider and status','tests + wiki sync'] },
+      { id:'provider-stats', label:'Provider Stats', icon:'chart-line', group:'Observability', status:'planned',
+        summary:'Per-provider success rate, latency percentiles and error mix over time.',
+        reference:'OmniRoute /api/provider-stats and /api/provider-metrics',
+        checklist:['aggregate per provider from persisted requests','show p50/p95 latency and error breakdown','compare providers side by side','tests + wiki sync'] },
+      { id:'runtime', label:'Runtime', icon:'server', group:'Observability', status:'planned',
+        summary:'Live process and runtime state of the gateway itself.',
+        reference:'OmniRoute /dashboard/runtime',
+        checklist:['report uptime, PID and event-loop state','show in-flight requests','expose config file path and size','tests + wiki sync'] },
+      { id:'system', label:'System', icon:'monitor', group:'Observability', status:'planned',
+        summary:'Host and storage view — disk used by config and logs, database size, update status.',
+        reference:'OmniRoute /dashboard/system and version_manager',
+        checklist:['report storage growth per file','show update availability','warn on oversized state','tests + wiki sync'] },
+      { id:'tokens', label:'Tokens', icon:'coins', group:'Observability', status:'planned',
+        summary:'Token accounting split into input, output, cache read, cache write and reasoning.',
+        reference:'OmniRoute usage_history token columns and token_ledger; call_logs.tokens_cache_read/creation/reasoning',
+        checklist:['capture the token breakdown per response','separate estimated from reported counts','show savings attribution','tests + wiki sync'] },
+      { id:'usage', label:'Usage', icon:'trending-up', group:'Observability', status:'planned',
+        summary:'Requests and tokens over time by provider, model and key.',
+        reference:'OmniRoute usage_history (52,981 rows), daily_usage_summary, hourly_usage_summary',
+        checklist:['decide the persistence layer first (see plan Wave 0)','aggregate daily and hourly','break down by provider and model','tests + wiki sync'] },
+
+      // Context & Compression
+      { id:'cache', label:'Cache', icon:'database-zap', group:'Context & Compression', status:'planned',
+        summary:'Response caching for repeated prompts, with honest hit accounting.',
+        reference:'OmniRoute semantic_cache (773 entries, ~500k tokens saved), cache_metrics, reasoning_cache',
+        checklist:['key responses by prompt hash and model','measure real hits and savings','allow per-key opt-out','tests + wiki sync'] },
+      { id:'compression', label:'Compression', icon:'file-archive', group:'Context & Compression', status:'planned',
+        summary:'Grow RTK from one pass into a composable engine stack. OmniRoute numbers show the cheap lite pass saves most, and CCR is the second biggest win with no KiteRouter equivalent.',
+        reference:'OmniRoute 12 engines (session-dedup, ccr, lite, rtk, responses-tool-output, headroom, relevance, caveman, aggressive, llmlingua-2, ultra, omniglyph); compression_engine_breakdown: lite 357M, ccr 49.7M, rtk 12.7M tokens saved',
+        checklist:['split the compressor into ordered, toggleable engines','add a CCR-style retrieve-marker engine','report per-engine savings honestly','tests + wiki sync'] },
+      { id:'context', label:'Context', icon:'brain-circuit', group:'Context & Compression', status:'planned',
+        summary:'Context window management — what fits, what gets trimmed, and how a long session is handed between models.',
+        reference:'OmniRoute context_handoffs (71 rows), model_context_overrides (680 rows), context-relay strategy',
+        checklist:['model the real context window per model','decide the trimming order','hand off context across models','tests + wiki sync'] },
+      { id:'conversations', label:'Conversations', icon:'messages-square', group:'Context & Compression', status:'planned',
+        summary:'Group requests into conversations to see sessions as a whole rather than isolated calls.',
+        reference:'OmniRoute agentic_conversations (2,577 rows) and conversation_turn_nodes (84,174 rows)',
+        checklist:['derive a conversation key from request shape','link turns into a graph','show per-conversation cost and tokens','tests + wiki sync'] },
+      { id:'memory', label:'Memory', icon:'memory-stick', group:'Context & Compression', status:'planned',
+        summary:'Persistent, searchable memory so repeated context does not have to be re-sent.',
+        reference:'OmniRoute memories plus memory_fts full-text and memory_vec vector search',
+        checklist:['define memory records and scopes','implement full-text search','inject only on relevance','tests + wiki sync'] },
+      { id:'translator', label:'Translator', icon:'languages', group:'Context & Compression', status:'planned',
+        summary:'Convert between wire formats (OpenAI chat, Anthropic messages, Gemini, Responses) explicitly and visibly.',
+        reference:'OmniRoute /dashboard/translator; call_logs.source_format and target_format',
+        checklist:['define the format pairs','translate request and response without loss','record the formats used per request','tests + wiki sync'] },
+
+      // Providers & Discovery
+      { id:'discovery', label:'Discovery', icon:'telescope', group:'Providers & Discovery', status:'planned',
+        summary:'Probe candidate providers and endpoints for feasibility, auth type and risk before adopting them.',
+        reference:'OmniRoute discovery_results (endpoint, auth_type, models, rate_limit, feasibility, risk_level)',
+        checklist:['probe a candidate endpoint read-only','classify auth and rate limits','record feasibility and risk','tests + wiki sync'] },
+      { id:'free-tiers', label:'Free Tiers', icon:'gift', group:'Providers & Discovery', status:'planned',
+        summary:'Catalogue of the free tiers currently reachable from this machine and what each is good for.',
+        reference:'OmniRoute /api/free-tier and free-models; 90+ built-in free tiers',
+        checklist:['enumerate free-capable providers','record limits per free tier','link each to its setup','tests + wiki sync'] },
+      { id:'free-provider-rankings', label:'Free Rankings', icon:'trophy', group:'Providers & Discovery', status:'planned',
+        summary:'Rank free providers by measured throughput, latency and reliability rather than marketing claims.',
+        reference:'OmniRoute /api/free-provider-rankings',
+        checklist:['rank from observed probe results','weight reliability over raw speed','refresh on a schedule','tests + wiki sync'] },
+      { id:'media-providers', label:'Media Providers', icon:'image', group:'Providers & Discovery', status:'planned',
+        summary:'Image, audio and video providers alongside the text models.',
+        reference:'OmniRoute /dashboard/media-providers and the modality bridge',
+        checklist:['model non-text modalities','route media requests by prefix','show capability per provider','tests + wiki sync'] },
+      { id:'api-manager', label:'API Manager', icon:'key-round', group:'Providers & Discovery', status:'planned',
+        summary:'Issue local keys so other tools can use this gateway without sharing the upstream credentials.',
+        reference:'OmniRoute api_keys (23 rows) with scopes, ip_allowlist, allowed_models/combos, per-key budgets, rate limits, chaos_mode, cache_default_mode; key_groups; relay_tokens',
+        checklist:['issue and revoke local keys','scope each key to models or combos','apply per-key limits and budgets','tests + wiki sync'] },
+
+      // Agents & Protocols
+      { id:'a2a', label:'A2A Protocol', icon:'share-2', group:'Agents & Protocols', status:'planned',
+        summary:'Agent-to-agent protocol so other agents can call this gateway as a peer.',
+        reference:'OmniRoute a2a_tasks and a2a_task_events; /.well-known/agent-card.json; /a2a route',
+        checklist:['publish an agent card','accept and track tasks','report task state transitions','tests + wiki sync'] },
+      { id:'acp-agents', label:'ACP Agents', icon:'bot', group:'Agents & Protocols', status:'planned',
+        summary:'Agent Client Protocol support for editor integrations.',
+        reference:'OmniRoute /dashboard/acp-agents and /api/acp',
+        checklist:['implement the ACP handshake','map agent calls to model requests','show connected agents','tests + wiki sync'] },
+      { id:'agent-skills', label:'Agent Skills', icon:'sparkles', group:'Agents & Protocols', status:'planned',
+        summary:'Installable skills an agent can invoke through the gateway.',
+        reference:'OmniRoute /api/agent-skills, github-skills, skill_executions, skills',
+        checklist:['define a skill manifest','execute a skill safely','audit every invocation','tests + wiki sync'] },
+      { id:'cli-agents', label:'CLI Agents', icon:'square-terminal', group:'Agents & Protocols', status:'planned',
+        summary:'Drive local CLI agents and observe their runs through the gateway.',
+        reference:'OmniRoute /dashboard/cli-agents and /api/cli-tools',
+        checklist:['detect installed CLI agents','launch and stream their output','record run outcomes','tests + wiki sync'] },
+      { id:'cli-code', label:'CLI Code', icon:'code-2', group:'Agents & Protocols', status:'planned',
+        summary:'Coding-oriented CLI workflows built on top of the gateway.',
+        reference:'OmniRoute /dashboard/cli-code and /api/cursor-cli',
+        checklist:['define the coding workflow','route to the best available model','show edits applied','tests + wiki sync'] },
+      { id:'cloud-agents', label:'Cloud Agents', icon:'cloud', group:'Agents & Protocols', status:'planned',
+        summary:'Dispatch long-running tasks to hosted agents and poll their results.',
+        reference:'OmniRoute cloud_agent_credentials and cloud_agent_tasks (status, prompt, result, activities)',
+        checklist:['store cloud agent credentials safely','dispatch a task and poll it','surface progress and results','tests + wiki sync'] },
+      { id:'mcp', label:'MCP Server', icon:'server-cog', group:'Agents & Protocols', status:'planned',
+        summary:'Expose the gateway itself as an MCP server so agents can inspect and control it.',
+        reference:'OmniRoute built-in MCP server with 110 tools; mcp_tool_audit, server_tool_executions',
+        checklist:['expose gateway state as MCP tools','audit every tool call','document the tool list','tests + wiki sync'] },
+      { id:'omni-skills', label:'Omni Skills', icon:'wand-sparkles', group:'Agents & Protocols', status:'planned',
+        summary:'Reusable prompt and workflow recipes applied per request.',
+        reference:'OmniRoute /dashboard/omni-skills and the skills table',
+        checklist:['define recipe records','apply a recipe to a request','show which recipe ran','tests + wiki sync'] },
+      { id:'search-tools', label:'Search Tools', icon:'search-code', group:'Agents & Protocols', status:'planned',
+        summary:'Web and code search tools the routed models can call.',
+        reference:'OmniRoute /dashboard/search-tools and /api/search',
+        checklist:['wire a search provider','expose it as a tool to models','cap and cache search calls','tests + wiki sync'] },
+      { id:'tools', label:'Tools', icon:'wrench', group:'Agents & Protocols', status:'planned',
+        summary:'Registry of tools and middleware hooks the gateway can apply to requests.',
+        reference:'OmniRoute /api/tools, middleware_hooks (priority, scope, code), plugin_analytics',
+        checklist:['register a tool or hook','run hooks in priority order','log hook effects','tests + wiki sync'] },
+
+      // Governance & Ops
+      { id:'batch', label:'Batch', icon:'list-checks', group:'Governance & Ops', status:'planned',
+        summary:'Queue many requests and collect results asynchronously.',
+        reference:'OmniRoute batches and batch_item_checkpoints (per-line status and results)',
+        checklist:['accept a batch of prompts','run with per-item checkpoints','download results','tests + wiki sync'] },
+      { id:'changelog', label:'Changelog', icon:'history', group:'Governance & Ops', status:'planned',
+        summary:'What changed in this gateway and when, readable from inside the app.',
+        reference:'OmniRoute /dashboard/changelog',
+        checklist:['render the repo changelog','link to commits','flag breaking changes','tests + wiki sync'] },
+      { id:'chaos', label:'Chaos', icon:'triangle-alert', group:'Governance & Ops', status:'planned',
+        summary:'Deliberately inject faults to prove failover works instead of assuming it does.',
+        reference:'OmniRoute chaos_mode_enabled per key and /api/chaos',
+        checklist:['inject provider errors on demand','verify failover reacts correctly','never enable it by accident','tests + wiki sync'] },
+      { id:'gamification', label:'Gamification', icon:'gamepad-2', group:'Governance & Ops', status:'planned',
+        summary:'Badges and progress for local usage. Cosmetic, lowest priority.',
+        reference:'OmniRoute badge_definitions (22), xp_audit_log (23,366 rows), user_levels',
+        checklist:['define badges','award from real usage','show progress','tests + wiki sync'] },
+      { id:'leaderboard', label:'Leaderboard', icon:'list-ordered', group:'Governance & Ops', status:'planned',
+        summary:'Local ranking of models and providers by measured performance.',
+        reference:'OmniRoute leaderboard and model_intelligence (241 rows)',
+        checklist:['rank from observed results','separate quality from speed','explain each score','tests + wiki sync'] },
+      { id:'onboarding', label:'Onboarding', icon:'graduation-cap', group:'Governance & Ops', status:'planned',
+        summary:'First-run checklist that takes a fresh install to a working first completion.',
+        reference:'OmniRoute /dashboard/onboarding',
+        checklist:['detect missing credentials','walk through the first completion','link each step to its panel','tests + wiki sync'] },
+      { id:'plugins', label:'Plugins', icon:'puzzle', group:'Governance & Ops', status:'planned',
+        summary:'Installable extensions that can hook request handling.',
+        reference:'OmniRoute plugins (manifest, hooks, permissions), plugin_analytics, plugin_metrics',
+        checklist:['define a plugin manifest','load plugins with declared permissions','measure per-plugin cost','tests + wiki sync'] },
+      { id:'profile', label:'Profile', icon:'user', group:'Governance & Ops', status:'planned',
+        summary:'Local identity and preferences for this gateway instance.',
+        reference:'OmniRoute /dashboard/profile',
+        checklist:['store local preferences','keep identity separate from credentials','export and import profile','tests + wiki sync'] },
+      { id:'radar', label:'Radar', icon:'radar', group:'Governance & Ops', status:'planned',
+        summary:'Upstream intel feed — new free models and provider changes worth adopting.',
+        reference:'OmniRoute OmniRoute Radar plus radar_* cache tables and radar_settings',
+        checklist:['define what is watched','cache fetched intel','make the feed opt-in only','tests + wiki sync'] },
+      { id:'relay', label:'Relay', icon:'git-fork', group:'Governance & Ops', status:'planned',
+        summary:'Share this gateway with others through scoped relay tokens.',
+        reference:'OmniRoute relay_tokens, relay_logs, relay_rate_limits',
+        checklist:['issue scoped relay tokens','rate limit and log relays','revoke instantly','tests + wiki sync'] },
+      { id:'settings', label:'Settings', icon:'settings', group:'Governance & Ops', status:'planned',
+        summary:'Every gateway setting in one place, alongside the existing backup and restore.',
+        reference:'OmniRoute /dashboard/settings',
+        checklist:['surface all config keys with validation','group by area','keep secrets masked','tests + wiki sync'] },
+      { id:'webhooks', label:'Webhooks', icon:'webhook', group:'Governance & Ops', status:'planned',
+        summary:'Notify external systems when gateway events happen.',
+        reference:'OmniRoute webhooks and webhook_deliveries (status, latency, payload snapshot)',
+        checklist:['register a webhook endpoint','sign and retry deliveries','show delivery history','tests + wiki sync'] }
+    ];
+
+    const FEATURE_BY_ID = Object.fromEntries(FEATURES.map(f => [f.id, f]));
+
+    // ── Icon rail ──────────────────────────────────────────────────────────
+
+    function renderRail() {
+      const rail = document.getElementById('nav-rail');
+      if (!rail) return;
+      let html = '';
+      let lastGroup = null;
+      FEATURES.forEach(f => {
+        if (f.group !== lastGroup) {
+          if (lastGroup !== null) html += '<div class="rail-sep"></div>';
+          lastGroup = f.group;
+        }
+        const live = f.status === 'live';
+        const dot = `<span class="rail-dot ${live ? 'bg-emerald-400' : 'bg-amber-400'}"></span>`;
+        const tone = live ? 'text-zinc-300' : 'text-zinc-500';
+        const tip = live ? `${f.label} · ${f.group}` : `${f.label} · planned · ${f.group}`;
+        const aria = live ? f.label : `${f.label} (planned, not implemented)`;
+        html += `<button type="button" onclick="switchTab('${f.id}')" id="tab-btn-${f.id}"` +
+                ` class="tab-btn rail-btn w-10 h-10 mx-auto my-0.5 flex items-center justify-center rounded-lg ${tone} hover:bg-zinc-800/60 hover:text-zinc-100 transition"` +
+                ` data-tip="${tip}" aria-label="${aria}">` +
+                `<i data-lucide="${f.icon}" class="w-4 h-4"></i>${dot}</button>`;
+      });
+      rail.innerHTML = html;
+      if (window.lucide) lucide.createIcons();
+      initRailTooltips();
+    }
+
+    // One fixed tooltip element, positioned on hover. Avoids the clipping a
+    // CSS-only tooltip suffers inside the scrolling rail.
+    function initRailTooltips() {
+      const tip = document.getElementById('rail-tooltip');
+      if (!tip) return;
+      const show = (el) => {
+        const r = el.getBoundingClientRect();
+        tip.textContent = el.dataset.tip;
+        tip.style.left = `${r.right + 10}px`;
+        tip.style.top = `${r.top + r.height / 2}px`;
+        tip.classList.remove('hidden');
+      };
+      const hide = () => tip.classList.add('hidden');
+      document.querySelectorAll('[data-tip]').forEach(el => {
+        el.addEventListener('mouseenter', () => show(el));
+        el.addEventListener('mouseleave', hide);
+        el.addEventListener('focus', () => show(el));
+        el.addEventListener('blur', hide);
+      });
+    }
+
+    // ── Plan + status panel for a feature that is not built yet ────────────
+
+    function renderFeaturePlan(tabId) {
+      const f = FEATURE_BY_ID[tabId];
+      if (!f || f.status !== 'planned') return null;
+
+      const section = document.createElement('section');
+      section.id = `tab-${tabId}`;
+      section.className = 'p-8 space-y-6 hidden';
+
+      const checklist = (f.checklist || []).map(item =>
+        `<li class="flex items-start gap-2.5">` +
+        `<span class="mt-0.5 w-3.5 h-3.5 shrink-0 rounded border border-zinc-600"></span>` +
+        `<span class="text-zinc-300">${item}</span></li>`
+      ).join('');
+
+      section.innerHTML = `
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-lg bg-zinc-800/80 border border-border flex items-center justify-center text-zinc-300">
+            <i data-lucide="${f.icon}" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h2 class="text-base font-semibold text-zinc-100 flex items-center gap-2">${f.label}
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wide bg-amber-500/10 border border-amber-500/30 text-amber-300">planned</span>
+            </h2>
+            <p class="text-xs text-muted mt-0.5">${f.group}</p>
+          </div>
+        </div>
+
+        <div class="bg-card border border-amber-500/20 rounded-xl p-4 text-xs text-amber-200/90 leading-relaxed">
+          <span class="font-semibold">Not implemented yet.</span>
+          This panel is a placeholder so the capability has a home and a written definition of done.
+          KiteRouter never presents an unbuilt feature as working.
+        </div>
+
+        <div class="bg-card border border-border rounded-xl p-5 space-y-2">
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-200">What it will do</h3>
+          <p class="text-xs text-zinc-300 leading-relaxed">${f.summary || ''}</p>
+        </div>
+
+        <div class="bg-card border border-border rounded-xl p-5 space-y-2">
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-200">OmniRoute reference</h3>
+          <p class="text-xs text-muted font-mono leading-relaxed">${f.reference || 'n/a'}</p>
+        </div>
+
+        <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-200">Definition of done</h3>
+          <ul class="space-y-2 text-xs">${checklist}</ul>
+        </div>`;
+
+      document.querySelector('main').appendChild(section);
+      if (window.lucide) lucide.createIcons();
+      return section;
+    }
+
     let currentConfig = { providers: {} };
     let latestRecentRequests = [];
     let isUserTyping = false;
@@ -880,16 +1222,18 @@ print(res.choices[0].message.content)</pre>
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       const activeBtn = document.getElementById('tab-btn-' + tabId);
       if (activeBtn) activeBtn.classList.add('active');
-      ['overview', 'providers', 'combos', 'connect', 'playground'].forEach(t => {
-        const sec = document.getElementById('tab-' + t);
-        if (sec) sec.classList.toggle('hidden', t !== tabId);
-      });
+
+      // Hide every panel, then reveal the target — creating it on first visit
+      // when the feature is still only planned.
+      document.querySelectorAll('main > section[id^="tab-"]').forEach(s => s.classList.add('hidden'));
+      let section = document.getElementById('tab-' + tabId);
+      if (!section) section = renderFeaturePlan(tabId);
+      if (section) section.classList.remove('hidden');
+
+      const feature = FEATURE_BY_ID[tabId];
       const pt = document.getElementById('page-title');
-      if (pt) {
-        if (tabId === 'connect') pt.innerText = 'Connect Tools';
-        else if (tabId === 'playground') pt.innerText = 'Test Playground';
-        else pt.innerText = tabId.charAt(0).toUpperCase() + tabId.slice(1);
-      }
+      if (pt) pt.innerText = feature ? feature.label : tabId;
+
       if (tabId === 'combos') {
         loadCombosData();
       }
@@ -2415,6 +2759,7 @@ print(res.choices[0].message.content)</pre>
 
     document.addEventListener('DOMContentLoaded', () => {
       lucide.createIcons();
+      renderRail();
       loadData();
       fetchRecentRequests();
       populateModelDatalist();
