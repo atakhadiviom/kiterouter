@@ -10,6 +10,7 @@ Config lives at `~/.kiterouter/config.json` and is editable from the dashboard (
 | `enable_rtk` | `true` | RTK prompt compression (strips terminal bloat, ANSI, oversized tool results) |
 | `max_tool_chars` | — | Cap on tool-result body size before truncation |
 | `providers` | `{}` | Per-provider credential blocks (below) |
+| `combos` | `{}` | Named multi-model routing chains with strategy and candidate models |
 
 ## Provider blocks
 

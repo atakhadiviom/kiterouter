@@ -50,6 +50,9 @@
         <button onclick="switchTab('providers')" id="tab-btn-providers" class="tab-btn w-full flex items-center gap-3 px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800/60 transition">
           <i data-lucide="cpu" class="w-4 h-4"></i> Providers
         </button>
+        <button onclick="switchTab('combos')" id="tab-btn-combos" class="tab-btn w-full flex items-center gap-3 px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800/60 transition">
+          <i data-lucide="layers" class="w-4 h-4"></i> Combos
+        </button>
         <button onclick="switchTab('playground')" id="tab-btn-playground" class="tab-btn w-full flex items-center gap-3 px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800/60 transition">
           <i data-lucide="terminal" class="w-4 h-4"></i> Test Playground
         </button>
@@ -267,6 +270,61 @@
       </div>
     </section>
 
+    <!-- Tab: Combos (Model Chains & Fallback) -->
+    <section id="tab-combos" class="p-8 space-y-6 hidden">
+      <!-- Combos Header & Actions -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-xl font-bold text-zinc-100 flex items-center gap-2">
+            <i data-lucide="layers" class="w-5 h-5 text-blue-400"></i> Model Combos & Fallback Chains
+          </h2>
+          <p class="text-xs text-muted mt-1">
+            Route prompts through ordered fallback chains, round-robin load balancers, or randomized model pools.
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="openCreateComboModal()" class="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow-sm">
+            <i data-lucide="plus" class="w-4 h-4"></i> Create Combo
+          </button>
+          <button onclick="import9RouterCombos()" id="btn-import-combos" class="px-3.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-border rounded-lg text-xs font-semibold transition flex items-center gap-1.5">
+            <i data-lucide="download" class="w-4 h-4"></i> Import from 9Router
+          </button>
+          <button onclick="loadCombosData()" class="p-2 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 rounded-lg transition border border-border" title="Refresh Combos">
+            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Combos Summary Metrics -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div class="bg-card border border-border p-4 rounded-xl">
+          <div class="text-[11px] font-medium text-muted uppercase tracking-wider">Active Combos</div>
+          <div id="stat-combo-count" class="text-2xl font-bold mt-1 text-zinc-100">0</div>
+          <div class="text-[11px] text-muted mt-0.5">Virtual model endpoints available</div>
+        </div>
+        <div class="bg-card border border-border p-4 rounded-xl">
+          <div class="text-[11px] font-medium text-muted uppercase tracking-wider">Total Chained Nodes</div>
+          <div id="stat-combo-models-count" class="text-2xl font-bold mt-1 text-blue-400">0</div>
+          <div class="text-[11px] text-muted mt-0.5">Underlying provider models routed</div>
+        </div>
+        <div class="bg-card border border-border p-4 rounded-xl">
+          <div class="text-[11px] font-medium text-muted uppercase tracking-wider">Default Strategy</div>
+          <div class="text-sm font-semibold mt-2 text-emerald-400 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span> Priority Fallback
+          </div>
+          <div class="text-[11px] text-muted mt-0.5">Automatic failover on provider error</div>
+        </div>
+      </div>
+
+      <!-- Combos Notification Banner -->
+      <div id="combos-banner" class="hidden text-xs p-3 rounded-lg border"></div>
+
+      <!-- Combos Cards Container -->
+      <div id="combos-container" class="grid grid-cols-1 gap-4">
+        <!-- Injected via JavaScript -->
+      </div>
+    </section>
+
     <!-- Tab 3: Test Playground -->
     <section id="tab-playground" class="p-8 space-y-6 hidden">
       <div class="bg-card border border-border rounded-xl p-6 space-y-4 max-w-2xl">
@@ -305,6 +363,71 @@
         </div>
       </div>
     </section>
+
+    <!-- Combo Create / Edit Modal -->
+    <div id="combo-modal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+      <div class="bg-zinc-900 border border-border rounded-xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div class="p-5 border-b border-border flex items-center justify-between">
+          <h3 id="combo-modal-title" class="text-sm font-bold text-zinc-100 flex items-center gap-2">
+            <i data-lucide="layers" class="w-4 h-4 text-blue-400"></i> Create Model Combo
+          </h3>
+          <button onclick="closeComboModal()" class="p-1 text-muted hover:text-zinc-200 rounded-lg hover:bg-zinc-800 transition">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+        <div class="p-5 space-y-4 overflow-y-auto flex-1">
+          <div>
+            <label class="text-xs font-semibold text-zinc-300 block mb-1">Combo Identifier <span class="text-rose-400">*</span></label>
+            <div class="flex items-center">
+              <span class="px-2.5 py-1.5 bg-zinc-800 border border-r-0 border-border rounded-l-lg text-xs font-mono text-muted">combo/</span>
+              <input id="combo-input-name" type="text" placeholder="e.g. smart-fallback, fast-coder"
+                class="flex-1 bg-zinc-950 border border-border rounded-r-lg px-3 py-1.5 text-xs font-mono text-zinc-100 focus:outline-none focus:border-blue-500">
+            </div>
+            <div class="text-[10px] text-muted mt-1">Clients can call <code>combo/&lt;name&gt;</code> or simply <code>&lt;name&gt;</code></div>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs font-semibold text-zinc-300 block mb-1">Routing Strategy</label>
+              <select id="combo-input-strategy" class="w-full bg-zinc-950 border border-border rounded-lg px-3 py-1.5 text-xs font-medium text-zinc-100 focus:outline-none focus:border-blue-500">
+                <option value="fallback">Priority Fallback (1st → 2nd → 3rd)</option>
+                <option value="round-robin">Round-Robin (Load Balancing)</option>
+                <option value="random">Random Model Pool</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-zinc-300 block mb-1">Description (optional)</label>
+              <input id="combo-input-desc" type="text" placeholder="e.g. Primary dev fallback chain"
+                class="w-full bg-zinc-950 border border-border rounded-lg px-3 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-blue-500">
+            </div>
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-zinc-300 block mb-1">Model Chain Sequence</label>
+            <div id="combo-modal-models-list" class="space-y-1.5 min-h-[70px] p-2 bg-zinc-950 border border-border rounded-lg">
+              <!-- Rendered items with up/down/remove -->
+            </div>
+          </div>
+          <div class="pt-1">
+            <label class="text-xs font-semibold text-zinc-300 block mb-1">Add Model to Sequence</label>
+            <div class="flex gap-2">
+              <select id="combo-modal-add-select" class="flex-1 bg-zinc-950 border border-border rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-100 focus:outline-none focus:border-blue-500">
+                <option value="">Loading models...</option>
+              </select>
+              <button onclick="addModelToComboModal()" type="button" class="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-border rounded-lg text-xs font-medium transition flex items-center gap-1">
+                <i data-lucide="plus" class="w-3.5 h-3.5"></i> Add
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="p-4 border-t border-border flex items-center justify-end gap-2 bg-zinc-900/80">
+          <button onclick="closeComboModal()" type="button" class="px-3 py-1.5 rounded-lg border border-border text-xs text-zinc-300 hover:bg-zinc-800 transition">
+            Cancel
+          </button>
+          <button onclick="saveComboFromModal()" id="btn-save-combo" type="button" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1.5">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i> Save Combo
+          </button>
+        </div>
+      </div>
+    </div>
   </main>
 
   <script>
@@ -343,12 +466,15 @@
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       const activeBtn = document.getElementById('tab-btn-' + tabId);
       if (activeBtn) activeBtn.classList.add('active');
-      ['overview', 'providers', 'playground'].forEach(t => {
+      ['overview', 'providers', 'combos', 'playground'].forEach(t => {
         const sec = document.getElementById('tab-' + t);
         if (sec) sec.classList.toggle('hidden', t !== tabId);
       });
       const pt = document.getElementById('page-title');
       if (pt) pt.innerText = tabId.charAt(0).toUpperCase() + tabId.slice(1);
+      if (tabId === 'combos') {
+        loadCombosData();
+      }
     }
 
     function formatRelativeTime(timestamp) {
@@ -386,6 +512,10 @@
         if (activeProvEl) activeProvEl.innerText = (healthRes.available_providers || []).join(' → ') || 'None ready';
 
         currentConfig = configRes;
+        if (configRes.combos) {
+          cachedCombos = configRes.combos;
+          renderCombos(configRes.combos);
+        }
         if (!isUserTyping) {
           renderProviders(configRes.providers || {}, healthRes.available_providers || []);
         }
@@ -1041,6 +1171,390 @@
       } finally {
         btn.innerText = originalText;
         btn.disabled = false;
+      }
+    }
+
+    let cachedCombos = {};
+    let modalComboModels = [];
+    let editingComboName = null;
+
+    async function loadCombosData() {
+      try {
+        const res = await fetch('/api/combos');
+        const data = await res.json();
+        if (data.status === 'success' && Array.isArray(data.combos)) {
+          const map = {};
+          data.combos.forEach(c => { map[c.name] = c; });
+          cachedCombos = map;
+          renderCombos(map);
+        }
+      } catch (err) {
+        console.error('Failed to load combos', err);
+      }
+    }
+
+    function renderCombos(combosMap) {
+      const container = document.getElementById('combos-container');
+      const countEl = document.getElementById('stat-combo-count');
+      const modelsCountEl = document.getElementById('stat-combo-models-count');
+      if (!container) return;
+
+      const comboKeys = Object.keys(combosMap || {});
+      if (countEl) countEl.innerText = comboKeys.length;
+
+      let totalChained = 0;
+      comboKeys.forEach(k => {
+        totalChained += (combosMap[k].models || []).length;
+      });
+      if (modelsCountEl) modelsCountEl.innerText = totalChained;
+
+      if (comboKeys.length === 0) {
+        container.innerHTML = `
+          <div class="bg-card border border-border rounded-xl p-8 text-center space-y-3">
+            <div class="inline-flex p-3 rounded-full bg-blue-500/10 text-blue-400">
+              <i data-lucide="layers" class="w-6 h-6"></i>
+            </div>
+            <h3 class="text-sm font-semibold text-zinc-200">No Model Combos Configured</h3>
+            <p class="text-xs text-muted max-w-md mx-auto">
+              Combos combine multiple models together into a single virtual endpoint with automatic fallback failover or round-robin balancing.
+            </p>
+            <div class="flex items-center justify-center gap-2 pt-2">
+              <button onclick="openCreateComboModal()" class="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition">
+                Create First Combo
+              </button>
+              <button onclick="import9RouterCombos()" class="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-border rounded-lg text-xs font-semibold transition">
+                Import from 9Router
+              </button>
+            </div>
+          </div>
+        `;
+        lucide.createIcons();
+        return;
+      }
+
+      const strategyBadges = {
+        'fallback': '<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Priority Fallback</span>',
+        'round-robin': '<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">Round-Robin</span>',
+        'random': '<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">Random Pool</span>',
+      };
+
+      container.innerHTML = comboKeys.map(k => {
+        const c = combosMap[k];
+        const strategy = (c.strategy || 'fallback').toLowerCase();
+        const badge = strategyBadges[strategy] || strategyBadges['fallback'];
+        const models = c.models || [];
+        const sourceBadge = c.source === '9router'
+          ? '<span class="px-1.5 py-0.5 rounded text-[10px] bg-zinc-800 text-zinc-400 border border-border">9router</span>'
+          : '<span class="px-1.5 py-0.5 rounded text-[10px] bg-zinc-800 text-zinc-400 border border-border">custom</span>';
+
+        const chainHtml = models.map((m, idx) => {
+          const provider = m.includes('/') ? m.split('/')[0] : 'custom';
+          const modelName = m.includes('/') ? m.split('/')[1] : m;
+          const arrow = idx < models.length - 1 ? '<span class="text-zinc-500 text-xs">→</span>' : '';
+          return `
+            <div class="flex items-center gap-1.5">
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-800/80 border border-border text-xs font-mono text-zinc-200" title="${escapeHtml(m)}">
+                <span class="text-[10px] text-blue-400 font-semibold uppercase">${escapeHtml(provider)}</span>
+                <span class="text-zinc-400">/</span>
+                <span class="truncate max-w-[140px]">${escapeHtml(modelName)}</span>
+              </span>
+              ${arrow}
+            </div>
+          `;
+        }).join('');
+
+        return `
+          <div class="bg-card border border-border rounded-xl p-5 space-y-4 hover:border-zinc-700 transition">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                  <i data-lucide="layers" class="w-4 h-4"></i>
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="font-bold text-sm text-zinc-100 font-mono">combo/${escapeHtml(c.name)}</span>
+                    ${badge}
+                    ${sourceBadge}
+                  </div>
+                  ${c.description ? `<p class="text-xs text-muted mt-0.5">${escapeHtml(c.description)}</p>` : ''}
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <button onclick="testCombo('${escapeHtml(c.name)}', this)" class="px-2.5 py-1 bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/30 rounded-lg text-xs font-medium transition flex items-center gap-1">
+                  <i data-lucide="play" class="w-3 h-3"></i> Test
+                </button>
+                <button onclick="useComboInPlayground('${escapeHtml(c.name)}')" class="px-2.5 py-1 bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 rounded-lg text-xs font-medium transition flex items-center gap-1">
+                  <i data-lucide="terminal" class="w-3 h-3"></i> Playground
+                </button>
+                <button onclick="copyToClipboard('combo/${escapeHtml(c.name)}')" class="p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-border rounded-lg text-xs transition" title="Copy model identifier">
+                  <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                </button>
+                <button onclick="openEditComboModal('${escapeHtml(c.name)}')" class="p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-border rounded-lg text-xs transition" title="Edit Combo">
+                  <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+                </button>
+                <button onclick="deleteCombo('${escapeHtml(c.name)}')" class="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-lg text-xs transition" title="Delete Combo">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- Visual Flow -->
+            <div>
+              <div class="text-[11px] font-medium text-muted mb-1.5 flex items-center gap-1">
+                <span>Model Chain (${models.length} steps):</span>
+              </div>
+              <div class="flex flex-wrap items-center gap-2 bg-zinc-950/60 p-2.5 rounded-lg border border-border/60">
+                ${chainHtml || '<span class="text-xs text-muted italic">No models assigned</span>'}
+              </div>
+            </div>
+
+            <div id="combo-test-result-${escapeHtml(c.name)}" class="hidden text-xs p-3 rounded-lg border"></div>
+          </div>
+        `;
+      }).join('');
+
+      lucide.createIcons();
+    }
+
+    async function testCombo(comboName, btnEl) {
+      const resBox = document.getElementById(`combo-test-result-${comboName}`);
+      if (!resBox) return;
+      const originalText = btnEl.innerHTML;
+      btnEl.disabled = true;
+      btnEl.innerHTML = '<i data-lucide="loader" class="w-3 h-3 animate-spin"></i> Testing...';
+      resBox.className = 'text-xs p-3 rounded-lg border bg-zinc-900/60 border-border text-zinc-400';
+      resBox.innerText = `Testing combo/${comboName} chain...`;
+      resBox.classList.remove('hidden');
+
+      try {
+        const res = await fetch('/api/test-combo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: comboName, prompt: 'ping' }),
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          resBox.className = 'text-xs p-3 rounded-lg border bg-emerald-950/40 border-emerald-500/30 text-emerald-300 flex items-center justify-between';
+          resBox.innerHTML = `
+            <div>
+              <strong>✓ Succeeded (${data.latency_ms}ms)</strong>
+              <div class="text-[11px] text-emerald-400/80 mt-0.5 truncate max-w-xl font-mono">"${escapeHtml(data.response)}"</div>
+            </div>
+            <span class="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono">READY</span>
+          `;
+        } else {
+          resBox.className = 'text-xs p-3 rounded-lg border bg-rose-950/40 border-rose-500/30 text-rose-300';
+          resBox.innerHTML = `
+            <strong>✗ Failed (${data.latency_ms}ms)</strong>: ${escapeHtml(data.error || 'All models failed')}
+          `;
+        }
+      } catch (err) {
+        resBox.className = 'text-xs p-3 rounded-lg border bg-rose-950/40 border-rose-500/30 text-rose-300';
+        resBox.innerText = `Network error: ${err}`;
+      } finally {
+        btnEl.disabled = false;
+        btnEl.innerHTML = originalText;
+        lucide.createIcons();
+      }
+    }
+
+    async function import9RouterCombos() {
+      const btn = document.getElementById('btn-import-combos');
+      const banner = document.getElementById('combos-banner');
+      if (btn) btn.disabled = true;
+      try {
+        const res = await fetch('/api/combos/import-9router', { method: 'POST' });
+        const data = await res.json();
+        if (banner) {
+          banner.classList.remove('hidden');
+          if (data.status === 'success') {
+            banner.className = 'text-xs p-3 rounded-lg border bg-emerald-950/40 border-emerald-500/30 text-emerald-300';
+            banner.innerHTML = `⚡ Imported <strong>${data.imported_count}</strong> combos from 9Router: ${data.imported_combos.join(', ')}`;
+          } else {
+            banner.className = 'text-xs p-3 rounded-lg border bg-amber-950/40 border-amber-500/30 text-amber-300';
+            banner.innerHTML = `⚠️ ${escapeHtml(data.message || 'No combos imported')}`;
+          }
+          setTimeout(() => banner.classList.add('hidden'), 5000);
+        }
+        await loadCombosData();
+        cachedAllModels = [];
+        await populateModelDatalist();
+      } catch (err) {
+        alert('Failed to import combos from 9Router: ' + err);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function useComboInPlayground(name) {
+      const input = document.getElementById('play-model');
+      if (input) input.value = `combo/${name}`;
+      switchTab('playground');
+    }
+
+    async function deleteCombo(name) {
+      if (!confirm(`Are you sure you want to delete combo "${name}"?`)) return;
+      try {
+        const res = await fetch(`/api/combos/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.status === 'success') {
+          delete cachedCombos[name];
+          renderCombos(cachedCombos);
+          cachedAllModels = [];
+          await populateModelDatalist();
+        } else {
+          alert('Failed to delete combo: ' + (data.message || ''));
+        }
+      } catch (err) {
+        alert('Network error deleting combo: ' + err);
+      }
+    }
+
+    async function openCreateComboModal() {
+      editingComboName = null;
+      document.getElementById('combo-modal-title').innerHTML = '<i data-lucide="layers" class="w-4 h-4 text-blue-400"></i> Create Model Combo';
+      document.getElementById('combo-input-name').value = '';
+      document.getElementById('combo-input-name').disabled = false;
+      document.getElementById('combo-input-strategy').value = 'fallback';
+      document.getElementById('combo-input-desc').value = '';
+      modalComboModels = [];
+      renderModalModelsList();
+      await populateModalModelSelect();
+      document.getElementById('combo-modal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    async function openEditComboModal(name) {
+      const c = cachedCombos[name];
+      if (!c) return;
+      editingComboName = name;
+      document.getElementById('combo-modal-title').innerHTML = `<i data-lucide="layers" class="w-4 h-4 text-blue-400"></i> Edit Combo: ${escapeHtml(name)}`;
+      document.getElementById('combo-input-name').value = name;
+      document.getElementById('combo-input-name').disabled = true;
+      document.getElementById('combo-input-strategy').value = c.strategy || 'fallback';
+      document.getElementById('combo-input-desc').value = c.description || '';
+      modalComboModels = [...(c.models || [])];
+      renderModalModelsList();
+      await populateModalModelSelect();
+      document.getElementById('combo-modal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function closeComboModal() {
+      document.getElementById('combo-modal').classList.add('hidden');
+    }
+
+    async function populateModalModelSelect() {
+      const sel = document.getElementById('combo-modal-add-select');
+      if (!sel) return;
+      try {
+        if (cachedAllModels.length === 0) {
+          const res = await fetch('/v1/models');
+          const data = await res.json();
+          cachedAllModels = (data.data || []).map(m => ({ id: m.id, owned_by: m.owned_by || (m.id.includes('/') ? m.id.split('/')[0] : 'router') }));
+        }
+        // Exclude combos to avoid circular definitions
+        const nonComboModels = cachedAllModels.filter(m => m.owned_by !== 'kiterouter-combo' && !m.id.startsWith('combo/'));
+        sel.innerHTML = nonComboModels.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.id)} (${escapeHtml(m.owned_by)})</option>`).join('');
+      } catch (e) {
+        console.error('Failed to populate model select in modal', e);
+      }
+    }
+
+    function renderModalModelsList() {
+      const container = document.getElementById('combo-modal-models-list');
+      if (!container) return;
+      if (modalComboModels.length === 0) {
+        container.innerHTML = '<div class="text-xs text-muted italic p-2 text-center">No models in chain. Pick a model below and click Add.</div>';
+        return;
+      }
+      container.innerHTML = modalComboModels.map((m, idx) => `
+        <div class="flex items-center justify-between p-2 rounded bg-zinc-900 border border-border/80 text-xs">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] w-4 h-4 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center font-mono font-bold">${idx + 1}</span>
+            <span class="font-mono text-zinc-200">${escapeHtml(m)}</span>
+          </div>
+          <div class="flex items-center gap-1">
+            <button onclick="moveComboModelUp(${idx})" type="button" class="p-1 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 rounded ${idx === 0 ? 'opacity-30 cursor-not-allowed' : ''}" ${idx === 0 ? 'disabled' : ''}>▲</button>
+            <button onclick="moveComboModelDown(${idx})" type="button" class="p-1 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 rounded ${idx === modalComboModels.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}" ${idx === modalComboModels.length - 1 ? 'disabled' : ''}>▼</button>
+            <button onclick="removeComboModel(${idx})" type="button" class="p-1 hover:bg-rose-500/20 text-rose-400 rounded">✕</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function moveComboModelUp(idx) {
+      if (idx <= 0) return;
+      const tmp = modalComboModels[idx];
+      modalComboModels[idx] = modalComboModels[idx - 1];
+      modalComboModels[idx - 1] = tmp;
+      renderModalModelsList();
+    }
+
+    function moveComboModelDown(idx) {
+      if (idx >= modalComboModels.length - 1) return;
+      const tmp = modalComboModels[idx];
+      modalComboModels[idx] = modalComboModels[idx + 1];
+      modalComboModels[idx + 1] = tmp;
+      renderModalModelsList();
+    }
+
+    function removeComboModel(idx) {
+      modalComboModels.splice(idx, 1);
+      renderModalModelsList();
+    }
+
+    function addModelToComboModal() {
+      const sel = document.getElementById('combo-modal-add-select');
+      if (!sel || !sel.value) return;
+      modalComboModels.push(sel.value);
+      renderModalModelsList();
+    }
+
+    async function saveComboFromModal() {
+      const name = document.getElementById('combo-input-name').value.trim();
+      const strategy = document.getElementById('combo-input-strategy').value;
+      const description = document.getElementById('combo-input-desc').value.trim();
+      const saveBtn = document.getElementById('btn-save-combo');
+
+      if (!name) {
+        alert('Please specify a combo identifier.');
+        return;
+      }
+      if (modalComboModels.length === 0) {
+        alert('Please add at least one model to the combo sequence.');
+        return;
+      }
+
+      if (saveBtn) saveBtn.disabled = true;
+      try {
+        let res;
+        if (editingComboName) {
+          res = await fetch(`/api/combos/${encodeURIComponent(editingComboName)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ strategy, description, models: modalComboModels }),
+          });
+        } else {
+          res = await fetch('/api/combos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, strategy, description, models: modalComboModels }),
+          });
+        }
+        const data = await res.json();
+        if (data.status === 'success') {
+          closeComboModal();
+          await loadCombosData();
+          cachedAllModels = [];
+          await populateModelDatalist();
+        } else {
+          alert('Failed to save combo: ' + (data.message || ''));
+        }
+      } catch (err) {
+        alert('Error saving combo: ' + err);
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
       }
     }
 

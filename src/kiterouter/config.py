@@ -33,6 +33,7 @@ class KiteConfig:
         "vertex": {"enabled": True, "api_key": "", "project_id": ""},
         "custom": {"enabled": True, "endpoint": "", "api_key": ""},
     })
+    combos: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def load(cls) -> "KiteConfig":
@@ -45,6 +46,7 @@ class KiteConfig:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             saved_providers = data.get("providers", {})
+            saved_combos = data.get("combos", {})
             default_config = cls()
             merged_providers = default_config.providers.copy()
             for k, v in saved_providers.items():
@@ -63,6 +65,7 @@ class KiteConfig:
                 enable_rtk=data.get("enable_rtk", True),
                 max_tool_chars=data.get("max_tool_chars", 12000),
                 providers=merged_providers,
+                combos=saved_combos if isinstance(saved_combos, dict) else {},
             )
         except Exception:
             return cls()
@@ -73,6 +76,19 @@ class KiteConfig:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(asdict(self), f, indent=2)
+
+    def set_combo(self, name: str, combo_data: Dict[str, Any]) -> None:
+        """Add or update a model combo and persist."""
+        self.combos[name] = combo_data
+        self.save()
+
+    def delete_combo(self, name: str) -> bool:
+        """Delete a model combo and persist."""
+        if name in self.combos:
+            del self.combos[name]
+            self.save()
+            return True
+        return False
 
     def update_provider_tokens(self, provider: str, updates: Dict[str, Any]) -> None:
         """Update tokens/credentials for a provider and persist to disk."""

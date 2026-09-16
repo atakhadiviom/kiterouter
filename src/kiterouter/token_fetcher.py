@@ -135,6 +135,89 @@ class TokenFetcher:
         return results
 
     @staticmethod
+    def fetch_combos_from_9router() -> Dict[str, Dict[str, Any]]:
+        """
+        Extract configured combos from 9Router SQLite DB:
+        ~/.9router/db/data.sqlite (table 'combos')
+        """
+        combos: Dict[str, Dict[str, Any]] = {}
+        db_path = Path.home() / ".9router" / "db" / "data.sqlite"
+        if not db_path.exists():
+            return combos
+
+        prefix_map = {
+            "cu": "cursor",
+            "cursor": "cursor",
+            "ag": "antigravity",
+            "agy": "antigravity",
+            "antigravity": "antigravity",
+            "cl": "cline",
+            "cline": "cline",
+            "oc": "opencode_free",
+            "opencode_free": "opencode_free",
+            "opencode_go": "opencode_go",
+            "kr": "kiro",
+            "kiro": "kiro",
+            "glm": "glm",
+            "minimax": "minimax",
+            "cx": "codex",
+            "codex": "codex",
+            "cmd": "command_code",
+            "cc": "claude",
+            "claude": "claude",
+            "gh": "copilot",
+            "copilot": "copilot",
+            "vertex": "vertex",
+        }
+
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            c = conn.cursor()
+            table_check = c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='combos'").fetchone()
+            if not table_check:
+                conn.close()
+                return combos
+
+            rows = c.execute("SELECT id, name, kind, models FROM combos").fetchall()
+            conn.close()
+
+            for row in rows:
+                c_id, name, kind, models_raw = row
+                if not name:
+                    continue
+                try:
+                    models_list = json.loads(models_raw) if isinstance(models_raw, str) else (models_raw or [])
+                except Exception:
+                    models_list = []
+
+                normalized_models = []
+                for m in models_list:
+                    if "/" in m:
+                        pref, rest = m.split("/", 1)
+                        norm_pref = prefix_map.get(pref.lower(), pref)
+                        if norm_pref == "cursor" and rest == "default":
+                            rest = "composer-2.5"
+                        elif norm_pref == "opencode_free" and "contributor" in rest:
+                            rest = "nemotron-3-ultra-free"
+                        elif norm_pref == "antigravity" and "3.8" in rest:
+                            rest = "gemini-3.7-flash-high"
+                        normalized_models.append(f"{norm_pref}/{rest}")
+                    else:
+                        normalized_models.append(m)
+
+                combos[name] = {
+                    "id": c_id,
+                    "name": name,
+                    "strategy": kind or "fallback",
+                    "models": normalized_models,
+                    "source": "9router",
+                }
+        except Exception as e:
+            logger.warning(f"Error fetching combos from 9router: {e}")
+
+        return combos
+
+    @staticmethod
     def fetch_from_omniroute(target_provider: Optional[str] = None) -> FetchResult:
         """
         Import active tokens stored in OmniRoute (~/.omniroute/storage.sqlite).

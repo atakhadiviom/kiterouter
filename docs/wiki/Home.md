@@ -9,6 +9,7 @@ Connect Claude Code, Cursor, Cline, OpenCode, Codex, Antigravity, and Hermes to 
 - [[Installation]]
 - [[Configuration]]
 - [[Providers]]
+- [[Combos and Model Routing]]
 - [[API Reference]]
 - [[Dashboard]]
 - [[Credential Import (OmniRoute and 9Router)]]

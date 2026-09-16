@@ -19,11 +19,15 @@ KiteRouter's port is hard-locked to **3001** in the code so it can never collide
 
 | Endpoint | Method | Purpose |
 |---|---|---|
-| `/v1/chat/completions` | POST | OpenAI-compatible completions (prefix-routed, e.g. `cursor/claude-3-5-sonnet`) |
+| `/v1/chat/completions` | POST | OpenAI-compatible completions (prefix-routed, e.g. `cursor/claude-3-5-sonnet` or combos e.g. `combo/Own`) |
 | `/v1/messages` | POST | Anthropic-compatible messages |
-| `/v1/models`, `/api/v1/models` | GET | All models from all configured providers |
-| `/dashboard` | GET | Zero-build dashboard (Provider Topology, Recent Requests, Providers, Playground) |
+| `/v1/models`, `/api/v1/models` | GET | All models from all configured providers + combos |
+| `/dashboard` | GET | Zero-build dashboard (Provider Topology, Recent Requests, Providers, Combos, Playground) |
 | `/api/config` | GET/POST | Read (secrets redacted) / save configuration |
+| `/api/combos` | GET/POST | List and create multi-model routing combos |
+| `/api/combos/{name}` | PUT/DELETE | Update or delete a model combo |
+| `/api/combos/import-9router` | POST | Import and translate combos from 9Router SQLite DB |
+| `/api/test-combo` | POST | Test combo execution and failover latency |
 | `/api/sync-source` | POST | Import credentials from OmniRoute or 9Router — **only credentials that actually decrypt & validate are imported** |
 | `/api/fetch-token` | POST | Auto-discover tokens from local apps (Cursor state.vscdb, gh auth, claude.json, …) |
 | `/api/fetch-models`, `/api/fetch-all-models` | POST | Fetch live model catalogs per provider / all providers |
@@ -36,6 +40,17 @@ KiteRouter's port is hard-locked to **3001** in the code so it can never collide
 Built-in adapters: `cursor` (uses `agent.v1.AgentService/Run` Connect-RPC over HTTP/2, auto-discovers agent host via `GetServerConfig`, CLI-impersonation to avoid outdated-version errors), `antigravity` (auto Google OAuth refresh, Cloud Code Assist format, honest GCP quota reporting), `opencode_free` (public zero-auth with `Bearer public` and desktop headers, dynamic catalog), `opencode_go` (OpenCode Go subscription routing over `zen/go/v1` with reasoning streaming), `cline` (dual routing to official Cline API or OpenRouter with token refresh), `claude`, `codex`, `glm`, `minimax`, `kiro`, `copilot`, `vertex`, `custom`, `command_code`. Additional providers arrive via import from OmniRoute/9Router and render automatically in the dashboard.
 
 Prefix routing: send `"model": "<provider>/<model-id>"` (aliases, e.g. `cx/…` codex, `cmd/…` command_code, `cc/…` claude, `gh/…` copilot, `kr/…` kiro).
+
+## Combos & Multi-Model Routing
+
+KiteRouter Combos group multiple AI models into a unified virtual model with automatic failover, load balancing, or random pooling:
+
+- **Strategies**:
+  - `fallback` (Priority Fallback): Evaluates models sequentially (`m1 → m2 → m3`), instantly failing over to the next candidate on HTTP error (401, 403, 429, 5xx) or timeout.
+  - `round-robin` (Load Balancing): Distributes incoming prompts sequentially across candidate models with automatic failover.
+  - `random` (Random Pool): Shuffles candidates randomly with automatic failover.
+- **Client Invocations**: Use `combo/<name>` or `<name>` directly in any OpenAI-compatible client.
+- **Management & Discovery**: Visual chain builder on the Dashboard (`/dashboard`), 1-click import from 9Router, and model dropdown in the Test Playground.
 
 ## Import policy (only what works)
 

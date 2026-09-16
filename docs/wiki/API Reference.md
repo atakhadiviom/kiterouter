@@ -6,13 +6,20 @@ Base: `http://127.0.0.1:3001`
 
 ### `POST /v1/chat/completions`
 
-OpenAI-compatible. Route with a provider prefix:
+OpenAI-compatible. Route with a provider prefix or a combo identifier:
 
 ```json
 { "model": "cursor/claude-3-5-sonnet", "messages": [{"role":"user","content":"hi"}], "stream": true }
 ```
 
-Streaming uses standard SSE (`data: …` chunks, `data: [DONE]`).
+Combos can be requested with or without the `combo/` prefix:
+
+```json
+{ "model": "combo/Own", "messages": [{"role":"user","content":"hi"}] }
+{ "model": "coding-power", "messages": [{"role":"user","content":"hi"}] }
+```
+
+Streaming uses standard SSE (`data: …` chunks, `data: [DONE]`). When routing through a combo, upstream errors trigger automatic fallback to subsequent models in the chain before client streaming begins.
 
 ### `POST /v1/messages`
 
@@ -20,7 +27,35 @@ Anthropic-compatible.
 
 ### `GET /v1/models` and `GET /api/v1/models`
 
-All models across all configured providers, with `owned_by` = provider id.
+All models across all configured providers, with `owned_by` = provider id, plus all virtual model combos with `owned_by: "kiterouter-combo"` and metadata (`strategy`, `models`).
+
+## Combos API
+
+### `GET /api/combos`
+Lists all configured model combos with their routing strategy (`fallback`, `round-robin`, `random`), model sequence, and description.
+
+### `POST /api/combos`
+Create a new combo:
+```json
+{
+  "name": "coding-power",
+  "strategy": "round-robin",
+  "models": ["opencode_go/deepseek-flash", "opencode_free/nemotron-3-ultra-free"],
+  "description": "Load-balanced coding combo"
+}
+```
+
+### `PUT /api/combos/{name}`
+Update an existing combo's models, strategy, or description.
+
+### `DELETE /api/combos/{name}`
+Delete a combo by name.
+
+### `POST /api/combos/import-9router`
+Extracts and translates combos stored in 9Router's SQLite database (`~/.9router/db/data.sqlite`), mapping short prefixes (e.g. `cu/`, `oc/`, `ag/`) to KiteRouter provider models.
+
+### `POST /api/test-combo`
+Runs a live end-to-end completion against the combo chain and returns the responding model, response snippet, and latency in milliseconds.
 
 ## Dashboard / management
 

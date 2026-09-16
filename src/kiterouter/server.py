@@ -22,7 +22,7 @@ logger = logging.getLogger("kiterouter.server")
 app = FastAPI(title="KiteRouter", version="0.1.0")
 
 config = KiteConfig.load()
-router = ProviderRouter(config=config.providers)
+router = ProviderRouter(config=config)
 STATIC_DIR = Path(__file__).parent / "static"
 CONFIG_DIR = Path.home() / ".kiterouter"
 REQUEST_LOG_FILE = CONFIG_DIR / "request_log.json"
@@ -193,13 +193,14 @@ async def list_models():
 
 @app.get("/api/config")
 async def get_config():
-    """Return provider configurations with recursively masked secret keys."""
+    """Return provider configurations with recursively masked secret keys and model combos."""
     masked_providers = redact_secrets_recursive(config.providers)
     available = await router.get_available_providers()
     return {
         "port": config.port,
         "enable_rtk": config.enable_rtk,
         "providers": masked_providers,
+        "combos": config.combos,
         "available_providers": available,
     }
 
@@ -224,7 +225,7 @@ async def update_config(req: UpdateConfigRequest):
 
     config.save()
     # Re-initialize router with updated config
-    router = ProviderRouter(config=config.providers)
+    router = ProviderRouter(config=config)
     available = await router.get_available_providers()
     return {"status": "saved", "available_providers": available}
 
@@ -273,16 +274,25 @@ async def sync_source_endpoint(req: SyncSourceRequest):
             config.providers[p_name][k] = v
         imported.append(p_name)
 
+    # If syncing from 9Router, also import configured model combos
+    imported_combos = []
+    if req.source == "9router":
+        discovered_combos = TokenFetcher.fetch_combos_from_9router()
+        for c_name, c_data in discovered_combos.items():
+            config.set_combo(c_name, c_data)
+            imported_combos.append(c_name)
+
     # Invariant: KiteRouter port must NEVER be altered by sync
     config.port = 3001
     config.save()
     global router
-    router = ProviderRouter(config=config.providers)
+    router = ProviderRouter(config=config)
     return {
         "status": "success",
         "source": req.source,
         "imported_count": len(imported),
         "imported_providers": imported,
+        "imported_combos": imported_combos,
         "skipped": skipped,
         "skipped_count": len(skipped),
     }
@@ -316,7 +326,7 @@ async def fetch_token_endpoint(req: FetchTokenRequest):
             config.providers[p_name][k] = v
         config.save()
         global router
-        router = ProviderRouter(config=config.providers)
+        router = ProviderRouter(config=config)
         return {
             "status": "success",
             "provider": req.provider,
@@ -336,7 +346,7 @@ async def fetch_token_endpoint(req: FetchTokenRequest):
                 config.providers[p_name][k] = v
             imported.append(p_name)
         config.save()
-        router = ProviderRouter(config=config.providers)
+        router = ProviderRouter(config=config)
         return {
             "status": "success",
             "imported_count": len(imported),
@@ -601,6 +611,164 @@ async def test_all_models_endpoint(req: Optional[TestAllModelsRequest] = None):
     }
 
 
+class ComboCreateRequest(BaseModel):
+    name: str
+    models: List[str]
+    strategy: Optional[str] = "fallback"  # "fallback", "round-robin", "random"
+    description: Optional[str] = ""
+
+
+class ComboUpdateRequest(BaseModel):
+    models: Optional[List[str]] = None
+    strategy: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ComboTestRequest(BaseModel):
+    name: str
+    prompt: Optional[str] = "ping"
+
+
+@app.get("/api/combos")
+async def list_combos():
+    """Return all defined combos with their strategies and models."""
+    combos_list = []
+    for name, data in config.combos.items():
+        if isinstance(data, dict):
+            combos_list.append({
+                "name": name,
+                "strategy": data.get("strategy", "fallback"),
+                "models": data.get("models", []),
+                "description": data.get("description", ""),
+                "source": data.get("source", "custom"),
+            })
+    return {"status": "success", "combos": combos_list}
+
+
+@app.post("/api/combos")
+async def create_combo(req: ComboCreateRequest):
+    """Create a new model combo."""
+    name = req.name.strip()
+    if not name:
+        return JSONResponse({"status": "error", "message": "Combo name is required"}, status_code=400)
+    if not req.models:
+        return JSONResponse({"status": "error", "message": "At least one model must be specified"}, status_code=400)
+
+    clean_strategy = req.strategy.lower() if req.strategy else "fallback"
+    if clean_strategy not in ("fallback", "round-robin", "random"):
+        clean_strategy = "fallback"
+
+    combo_data = {
+        "name": name,
+        "strategy": clean_strategy,
+        "models": req.models,
+        "description": req.description or "",
+        "source": "custom",
+    }
+    config.set_combo(name, combo_data)
+    router.set_combos(config.combos)
+    return {"status": "success", "combo": combo_data}
+
+
+@app.put("/api/combos/{name}")
+async def update_combo(name: str, req: ComboUpdateRequest):
+    """Update an existing model combo."""
+    if name not in config.combos:
+        return JSONResponse({"status": "error", "message": f"Combo '{name}' not found"}, status_code=404)
+
+    combo = dict(config.combos[name])
+    if req.models is not None:
+        combo["models"] = req.models
+    if req.strategy is not None:
+        s = req.strategy.lower()
+        if s in ("fallback", "round-robin", "random"):
+            combo["strategy"] = s
+    if req.description is not None:
+        combo["description"] = req.description
+
+    config.set_combo(name, combo)
+    router.set_combos(config.combos)
+    return {"status": "success", "combo": combo}
+
+
+@app.delete("/api/combos/{name}")
+async def delete_combo(name: str):
+    """Delete a model combo."""
+    if not config.delete_combo(name):
+        return JSONResponse({"status": "error", "message": f"Combo '{name}' not found"}, status_code=404)
+    router.set_combos(config.combos)
+    return {"status": "success", "message": f"Combo '{name}' deleted"}
+
+
+@app.post("/api/combos/import-9router")
+async def import_combos_9router():
+    """Import combos directly from 9Router SQLite database."""
+    from kiterouter.token_fetcher import TokenFetcher
+    found = TokenFetcher.fetch_combos_from_9router()
+    if not found:
+        return JSONResponse({
+            "status": "warning",
+            "message": "No combos found in 9Router",
+            "imported_count": 0,
+            "combos": [],
+        })
+
+    imported_names = []
+    for c_name, c_data in found.items():
+        config.set_combo(c_name, c_data)
+        imported_names.append(c_name)
+
+    router.set_combos(config.combos)
+    return {
+        "status": "success",
+        "imported_count": len(imported_names),
+        "imported_combos": imported_names,
+    }
+
+
+@app.post("/api/test-combo")
+async def test_combo(req: ComboTestRequest):
+    """Test a combo with a simple prompt and return response and latency."""
+    combo = router.get_combo(req.name)
+    if not combo:
+        return JSONResponse({"status": "error", "message": f"Combo '{req.name}' not found"}, status_code=404)
+
+    prompt = req.prompt or "ping"
+    messages = [{"role": "user", "content": prompt}]
+    start_time = time.time()
+    collected = []
+    try:
+        async for chunk in router.stream_combo(combo, messages, max_tokens=30):
+            if chunk.startswith("data: ") and chunk.strip() != "data: [DONE]":
+                try:
+                    payload = json.loads(chunk[6:].strip())
+                    delta = payload.get("choices", [{}])[0].get("delta", {})
+                    c = delta.get("content") or delta.get("reasoning_content") or ""
+                    if c:
+                        collected.append(c)
+                except Exception:
+                    pass
+        latency_ms = round((time.time() - start_time) * 1000)
+        resp_text = "".join(collected).strip()
+        status = "ok" if (resp_text and not is_error_content(resp_text)) else "error"
+        return {
+            "status": status,
+            "combo": req.name,
+            "latency_ms": latency_ms,
+            "response": resp_text,
+            "error": resp_text if status == "error" else None,
+        }
+    except Exception as e:
+        latency_ms = round((time.time() - start_time) * 1000)
+        return {
+            "status": "error",
+            "combo": req.name,
+            "latency_ms": latency_ms,
+            "response": "",
+            "error": str(e),
+        }
+
+
 @app.get("/api/recent-requests")
 async def get_recent_requests(limit: int = 15):
     """Return recent completion requests (newest first)."""
@@ -622,10 +790,14 @@ async def chat_completions(req: ChatCompletionRequest):
     prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
     tokens_in = max(1, prompt_chars // 4)
     start_time = time.time()
-    explicit_p, _ = router.parse_model_and_provider(req.model)
-    provider_name = explicit_p or (
-        router.fallback_chain[0] if router.fallback_chain else "unknown"
-    )
+    combo_info = router.get_combo(req.model)
+    if combo_info:
+        provider_name = f"combo/{combo_info['name']}"
+    else:
+        explicit_p, _ = router.parse_model_and_provider(req.model)
+        provider_name = explicit_p or (
+            router.fallback_chain[0] if router.fallback_chain else "unknown"
+        )
 
     if req.stream:
         async def logging_stream():
