@@ -27,6 +27,7 @@ class KiteConfig:
         "glm": {"enabled": True, "api_key": ""},
         "minimax": {"enabled": True, "api_key": ""},
         "codex": {"enabled": True, "api_key": ""},
+        "command_code": {"enabled": True, "api_key": ""},
         "claude": {"enabled": True, "api_key": ""},
         "copilot": {"enabled": True, "token": ""},
         "vertex": {"enabled": True, "api_key": "", "project_id": ""},
@@ -52,9 +53,13 @@ class KiteConfig:
                 else:
                     merged_providers[k] = v
 
+            port = data.get("port", 3001)
+            if port == 20128 or not port:
+                port = 3001
+
             return cls(
                 host=data.get("host", "127.0.0.1"),
-                port=data.get("port", 3001),
+                port=port,
                 enable_rtk=data.get("enable_rtk", True),
                 max_tool_chars=data.get("max_tool_chars", 12000),
                 providers=merged_providers,
@@ -63,6 +68,8 @@ class KiteConfig:
             return cls()
 
     def save(self) -> None:
+        if getattr(self, "port", None) == 20128 or not getattr(self, "port", None):
+            self.port = 3001
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(asdict(self), f, indent=2)

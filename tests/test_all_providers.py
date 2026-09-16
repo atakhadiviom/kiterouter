@@ -19,6 +19,7 @@ def test_all_13_providers_registered():
         "glm",
         "minimax",
         "codex",
+        "command_code",
         "claude",
         "copilot",
         "vertex",

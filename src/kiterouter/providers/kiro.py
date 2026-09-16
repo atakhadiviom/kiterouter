@@ -26,9 +26,21 @@ class KiroProvider(BaseProvider):
             or os.environ.get("KIRO_TOKEN")
             or os.environ.get("KIRO_API_KEY")
         )
-        self.endpoint = self.config.get(
-            "endpoint", "https://api.kiro.ai/v1/chat/completions"
+        base = (
+            self.config.get("endpoint")
+            or self.config.get("base_url")
+            or "https://api.kilocode.ai/v1/chat/completions"
         )
+        if base and "api.kiro.ai" in base:
+            base = "https://api.kilocode.ai/v1/chat/completions"
+        elif base and not base.endswith("/chat/completions") and not base.endswith("/messages"):
+            if base.endswith("/v1"):
+                base = f"{base}/chat/completions"
+            elif base.endswith("/"):
+                base = f"{base}v1/chat/completions"
+            else:
+                base = f"{base}/v1/chat/completions"
+        self.endpoint = base
         self.mock_mode = self.config.get("mock", False)
 
     async def is_available(self) -> bool:

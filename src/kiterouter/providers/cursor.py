@@ -51,6 +51,12 @@ def generate_cursor_checksum(machine_id: str) -> str:
     return f"{encoded}{machine_id}"
 
 
+def build_connect_envelope(payload: Dict[str, Any]) -> bytes:
+    """Construct a 5-byte framed ConnectRPC message envelope."""
+    payload_bytes = json.dumps(payload).encode("utf-8")
+    return bytes([0]) + len(payload_bytes).to_bytes(4, "big") + payload_bytes
+
+
 def build_cursor_anti_ban_headers(
     access_token: str,
     machine_id: Optional[str] = None,
@@ -68,7 +74,8 @@ def build_cursor_anti_ban_headers(
 
     return {
         "authorization": f"Bearer {clean_token}",
-        "content-type": "application/json",
+        "content-type": "application/connect+json",
+        "connect-protocol-version": "1",
         "user-agent": "connect-es/1.6.1",
         "x-amzn-trace-id": f"Root={uuid.uuid4()}",
         "x-client-key": client_key,
@@ -174,9 +181,11 @@ class CursorProvider(BaseProvider):
         if max_tokens:
             payload["maxTokens"] = max_tokens
 
+        envelope = build_connect_envelope(payload)
+
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                async with client.stream("POST", self.endpoint, headers=headers, json=payload) as resp:
+                async with client.stream("POST", self.endpoint, headers=headers, content=envelope) as resp:
                     if resp.status_code in (429, 403):
                         # Anti-ban: never retry-spam. Surface the block and stop
                         # so the router can fail over to another provider.
@@ -191,9 +200,28 @@ class CursorProvider(BaseProvider):
                         yield "data: [DONE]\n\n"
                         return
 
-                    async for line in resp.aiter_lines():
-                        if line:
-                            yield f"{line}\n\n"
+                    buffer = bytearray()
+                    async for chunk in resp.aiter_bytes():
+                        buffer.extend(chunk)
+                        while len(buffer) >= 5:
+                            flag = buffer[0]
+                            msg_len = int.from_bytes(buffer[1:5], "big")
+                            if len(buffer) < 5 + msg_len:
+                                break
+                            msg_bytes = buffer[5:5 + msg_len]
+                            del buffer[:5 + msg_len]
+                            if flag == 0:
+                                try:
+                                    frame_json = json.loads(msg_bytes.decode("utf-8"))
+                                    text = frame_json.get("text") or frame_json.get("content") or ""
+                                    if text:
+                                        yield create_sse_chunk(text, model=model)
+                                except Exception:
+                                    pass
+                            elif flag == 2:
+                                break
+                    yield create_sse_chunk(finish_reason="stop", model=model)
+                    yield "data: [DONE]\n\n"
         except Exception as e:
             yield create_sse_chunk(f"[Cursor bridge notice: {e}]", model=model)
             yield create_sse_chunk(finish_reason="stop", model=model)

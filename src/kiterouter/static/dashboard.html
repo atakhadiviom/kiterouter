@@ -79,66 +79,188 @@
       </div>
     </header>
 
-    <!-- Tab 1: Overview -->
+    <!-- Tab 1: Overview (OmniRoute Style Topology + Recent Requests) -->
     <section id="tab-overview" class="p-8 space-y-6">
+      <!-- Stats Row -->
       <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
         <div class="bg-card border border-border p-5 rounded-xl">
           <div class="text-xs font-medium text-muted uppercase tracking-wider">Total Requests</div>
           <div id="stat-total-requests" class="text-3xl font-bold mt-2 text-zinc-100">0</div>
-          <div class="text-xs text-muted mt-1">Served via local router</div>
+          <div class="text-xs text-muted mt-1">Live requests through gateway</div>
         </div>
         <div class="bg-card border border-border p-5 rounded-xl">
           <div class="text-xs font-medium text-muted uppercase tracking-wider">Estimated Tokens Saved</div>
           <div id="stat-saved-tokens" class="text-3xl font-bold mt-2 text-emerald-400">0</div>
-          <div class="text-xs text-muted mt-1">RTK git diff & tool noise stripper</div>
+          <div class="text-xs text-muted mt-1">RTK compressor & tool stripper</div>
         </div>
         <div class="bg-card border border-border p-5 rounded-xl">
           <div class="text-xs font-medium text-muted uppercase tracking-wider">Active Fallback Chain</div>
           <div id="stat-active-providers" class="text-sm font-semibold mt-2 text-blue-400">Loading...</div>
-          <div class="text-xs text-muted mt-1">Subscription → Cheap → Free</div>
+          <div class="text-xs text-muted mt-1">Subscription → Budget → Free</div>
         </div>
       </div>
 
-      <!-- Quick CLI Setup snippets -->
+      <!-- Provider Topology Section -->
       <div class="bg-card border border-border rounded-xl p-6 space-y-4">
-        <h2 class="font-semibold text-base text-zinc-100 flex items-center gap-2">
-          <i data-lucide="plug" class="w-4 h-4 text-blue-400"></i> Connect Your Coding CLIs to KiteRouter
-        </h2>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div class="bg-zinc-900 border border-border/70 rounded-lg p-4">
-            <div class="font-medium text-zinc-200 text-xs mb-2">Claude Code CLI</div>
-            <pre class="bg-black/50 p-3 rounded text-xs font-mono text-zinc-300 overflow-x-auto">export ANTHROPIC_BASE_URL=http://localhost:3001
-claude</pre>
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="font-semibold text-base text-zinc-100 flex items-center gap-2">
+              <i data-lucide="network" class="w-4 h-4 text-blue-400"></i> Provider Topology
+            </h2>
+            <p id="topology-summary" class="text-xs text-muted mt-0.5">0 active · 0 error</p>
           </div>
-          <div class="bg-zinc-900 border border-border/70 rounded-lg p-4">
-            <div class="font-medium text-zinc-200 text-xs mb-2">Cursor / Cline / Roo / OpenClaw</div>
-            <pre class="bg-black/50 p-3 rounded text-xs font-mono text-zinc-300 overflow-x-auto">Base URL: http://localhost:3001/v1
-API Key:  kiterouter-local
-Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
+          <button onclick="switchTab('providers')" class="text-xs text-blue-400 hover:text-blue-300 font-medium transition flex items-center gap-1">
+            Manage Providers <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+          <!-- Active Column -->
+          <div class="bg-zinc-900/70 border border-border/80 rounded-lg p-4 space-y-3">
+            <div class="flex items-center justify-between pb-2 border-b border-border/60">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span class="text-xs font-semibold text-zinc-200">Active</span>
+              </div>
+              <span id="badge-active-count" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">0</span>
+            </div>
+            <div id="topology-active-list" class="space-y-1.5 min-h-[48px]">
+              <div class="text-xs text-zinc-500 py-1 font-mono">None active yet</div>
+            </div>
           </div>
+
+          <!-- Recent Column -->
+          <div class="bg-zinc-900/70 border border-border/80 rounded-lg p-4 space-y-3">
+            <div class="flex items-center justify-between pb-2 border-b border-border/60">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-blue-400"></span>
+                <span class="text-xs font-semibold text-zinc-200">Recent (10m)</span>
+              </div>
+              <span id="badge-recent-count" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">0</span>
+            </div>
+            <div id="topology-recent-list" class="space-y-1.5 min-h-[48px]">
+              <div class="text-xs text-zinc-500 py-1 font-mono">No recent traffic</div>
+            </div>
+          </div>
+
+          <!-- Error Column -->
+          <div class="bg-zinc-900/70 border border-border/80 rounded-lg p-4 space-y-3">
+            <div class="flex items-center justify-between pb-2 border-b border-border/60">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-rose-400"></span>
+                <span class="text-xs font-semibold text-zinc-200">Error</span>
+              </div>
+              <span id="badge-error-count" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">0</span>
+            </div>
+            <div id="topology-error-list" class="space-y-1.5 min-h-[48px]">
+              <div class="text-xs text-zinc-500 py-1 font-mono">No failing providers</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Requests Table (OmniRoute Style) -->
+      <div class="bg-card border border-border rounded-xl p-6 space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="font-semibold text-base text-zinc-100 flex items-center gap-2">
+              <i data-lucide="activity" class="w-4 h-4 text-emerald-400"></i> Recent Requests
+            </h2>
+            <p class="text-xs text-muted mt-0.5">Live completions and streams through /v1/chat/completions and /v1/messages</p>
+          </div>
+          <span class="text-[11px] text-muted font-mono flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> polling 2.5s
+          </span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs font-mono">
+            <thead>
+              <tr class="border-b border-border text-muted uppercase text-[10px] tracking-wider">
+                <th class="pb-3 font-medium">Model</th>
+                <th class="pb-3 font-medium">Provider</th>
+                <th class="pb-3 font-medium">In / Out</th>
+                <th class="pb-3 font-medium">Latency</th>
+                <th class="pb-3 font-medium">Status</th>
+                <th class="pb-3 font-medium text-right">When</th>
+              </tr>
+            </thead>
+            <tbody id="recent-requests-body" class="divide-y divide-border/40 text-zinc-300">
+              <tr>
+                <td colspan="6" class="py-6 text-center text-zinc-500 font-sans">No recent requests recorded yet. Test a model in Playground or run Test All Models!</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>
 
     <!-- Tab 2: Providers Setup -->
     <section id="tab-providers" class="p-8 space-y-6 hidden">
-      <div class="flex items-center justify-between">
+      <!-- Section Header -->
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 class="text-base font-semibold text-zinc-100">Configured AI Providers</h2>
-          <p class="text-xs text-muted">Enter tokens and API keys. Changes save directly to <code>~/.kiterouter/config.json</code>.</p>
+          <p class="text-xs text-muted">Live upstream status, explicit source imports, and model validation. Settings persist to <code>~/.kiterouter/config.json</code>.</p>
         </div>
-        <div class="flex items-center gap-2">
-          <button onclick="syncFromSource('9router')" class="px-3 py-2 bg-purple-600/20 border border-purple-500/30 hover:bg-purple-600/30 text-purple-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
-            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Sync 9Router
+        <div class="flex flex-wrap items-center gap-2">
+          <button onclick="fetchAllModels()" id="btn-fetch-all" class="px-3 py-2 bg-blue-600/20 border border-blue-500/30 hover:bg-blue-600/30 text-blue-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+            <i data-lucide="layers" class="w-3.5 h-3.5"></i> Auto-Fetch All Models
           </button>
-          <button onclick="autoImportAllTokens()" class="px-3 py-2 bg-emerald-600/20 border border-emerald-500/30 hover:bg-emerald-600/30 text-emerald-400 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
-            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i> Auto-Fetch All
+          <button onclick="testAllModels()" id="btn-test-all" class="px-3 py-2 bg-amber-600/20 border border-amber-500/30 hover:bg-amber-600/30 text-amber-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+            <i data-lucide="play-circle" class="w-3.5 h-3.5"></i> Test All Models
           </button>
-          <button onclick="saveAllProviders()" class="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg text-xs transition flex items-center gap-1.5 shadow-lg shadow-blue-600/20">
+          <button onclick="saveAllProviders()" id="btn-save-all" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg text-xs transition flex items-center gap-1.5 shadow-lg shadow-emerald-600/20">
             <i data-lucide="save" class="w-3.5 h-3.5"></i> Save Settings
           </button>
         </div>
       </div>
+
+      <!-- Explicit Imports Card -->
+      <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <div class="w-7 h-7 rounded-lg bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-400">
+              <i data-lucide="download-cloud" class="w-4 h-4"></i>
+            </div>
+            <div>
+              <h3 class="font-semibold text-xs text-zinc-100 uppercase tracking-wide">Import credentials from other proxies & apps</h3>
+              <p class="text-xs text-muted">Directly import active sessions, OAuth tokens, and API keys with accurate source labeling.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+          <button onclick="syncFromSource('omniroute')" class="p-3 bg-zinc-900/90 hover:bg-zinc-800/80 border border-border rounded-lg text-left transition flex items-start gap-2.5">
+            <i data-lucide="repeat" class="w-4 h-4 text-purple-400 mt-0.5 shrink-0"></i>
+            <div>
+              <div class="font-medium text-zinc-200 text-xs leading-tight">Import from OmniRoute</div>
+              <div class="text-[11px] text-muted font-mono mt-0.5">Port 20128 SQLite store</div>
+            </div>
+          </button>
+
+          <button onclick="syncFromSource('9router')" class="p-3 bg-zinc-900/90 hover:bg-zinc-800/80 border border-border rounded-lg text-left transition flex items-start gap-2.5">
+            <i data-lucide="database" class="w-4 h-4 text-blue-400 mt-0.5 shrink-0"></i>
+            <div>
+              <div class="font-medium text-zinc-200 text-xs leading-tight">Import from 9Router</div>
+              <div class="text-[11px] text-muted font-mono mt-0.5">~/.9router/db/data.sqlite</div>
+            </div>
+          </button>
+
+          <button onclick="autoImportAllTokens()" class="p-3 bg-zinc-900/90 hover:bg-zinc-800/80 border border-border rounded-lg text-left transition flex items-start gap-2.5">
+            <i data-lucide="sparkles" class="w-4 h-4 text-emerald-400 mt-0.5 shrink-0"></i>
+            <div>
+              <div class="font-medium text-zinc-200 text-xs leading-tight">Import from Local Apps</div>
+              <div class="text-[11px] text-muted font-mono mt-0.5">Cursor, Antigravity, Claude, Copilot</div>
+            </div>
+          </button>
+        </div>
+
+        <div id="import-status-banner" class="hidden text-xs p-3 rounded-lg border"></div>
+      </div>
+
+      <!-- Test All Models Status Banner -->
+      <div id="test-all-banner" class="hidden text-xs p-3 rounded-lg border"></div>
 
       <div id="providers-container" class="grid grid-cols-1 md:grid-cols-2 gap-5">
         <!-- Injected via JavaScript -->
@@ -150,9 +272,20 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
       <div class="bg-card border border-border rounded-xl p-6 space-y-4 max-w-2xl">
         <h2 class="font-semibold text-base text-zinc-100">Test Live Model Completion</h2>
         <div class="space-y-3">
-          <div>
-            <label class="text-xs font-medium text-muted block mb-1">Model Name / Prefix</label>
-            <input id="play-model" type="text" value="opencode_free/claude-3-5-sonnet" class="w-full bg-zinc-900 border border-border px-3 py-2 rounded-lg text-xs font-mono focus:outline-none focus:border-blue-500">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="sm:col-span-2">
+              <label class="text-xs font-medium text-muted block mb-1">Model (select from fetched/imported, or type)</label>
+              <input id="play-model" type="text" list="play-model-options" value="opencode_free/claude-3-5-sonnet" placeholder="provider/model-id"
+                class="w-full bg-zinc-900 border border-border px-3 py-2 rounded-lg text-xs font-mono focus:outline-none focus:border-blue-500">
+              <datalist id="play-model-options"></datalist>
+            </div>
+            <div>
+              <label class="text-xs font-medium text-muted block mb-1">Provider filter</label>
+              <select id="play-provider-filter" onchange="populateModelDatalist()"
+                class="w-full bg-zinc-900 border border-border px-3 py-2 rounded-lg text-xs font-mono focus:outline-none focus:border-blue-500">
+                <option value="">All providers</option>
+              </select>
+            </div>
           </div>
           <div>
             <label class="text-xs font-medium text-muted block mb-1">Prompt</label>
@@ -164,7 +297,10 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
         </div>
 
         <div class="mt-4">
-          <label class="text-xs font-medium text-muted block mb-1">Output Stream</label>
+          <div class="flex items-center justify-between mb-1">
+            <label class="text-xs font-medium text-muted block">Output Stream</label>
+            <span id="play-output-meta" class="text-[11px] font-mono text-zinc-500"></span>
+          </div>
           <pre id="play-output" class="bg-black/60 border border-border p-4 rounded-lg text-xs font-mono text-zinc-300 min-h-[100px] whitespace-pre-wrap">Click "Send Test Request" above to verify response.</pre>
         </div>
       </div>
@@ -178,25 +314,61 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
       { id: "cline", name: "Cline Extension", type: "Anthropic / OpenAI", desc: "Messages format translation adapter", fields: [{ key: "api_key", label: "API Key", placeholder: "sk-ant-..." }] },
       { id: "opencode_free", name: "OpenCode Free", type: "Free Tier", desc: "Keyless public models (Claude 3.5, GPT-4o, DeepSeek)", fields: [] },
       { id: "opencode_go", name: "OpenCode Go", type: "Subscription", desc: "Authenticated OpenCode cloud routing", fields: [{ key: "api_key", label: "Go API Key", placeholder: "oc_live_..." }] },
-      { id: "kiro", name: "Kiro AI", type: "Free 50 Credits", desc: "Claude 4.5, GLM-5, MiniMax free tier", fields: [{ key: "token", label: "Kiro Token / API Key", placeholder: "kr_..." }] },
+      { id: "kiro", name: "Kiro AI", type: "Free 50 Credits", desc: "Claude 4.5, GLM-5, MiniMax free tier (kilocode.ai)", fields: [{ key: "token", label: "Kiro Token / API Key", placeholder: "kr_..." }] },
       { id: "glm", name: "Zhipu GLM", type: "Budget ($0.6/1M)", desc: "GLM-5.1, GLM-4.7 daily coding plan", fields: [{ key: "api_key", label: "GLM API Key", placeholder: "4689...abc" }] },
       { id: "minimax", name: "MiniMax", type: "Budget ($0.2/1M)", desc: "MiniMax M2.7, M2.5 1M context", fields: [{ key: "api_key", label: "MiniMax API Key", placeholder: "eyJhb..." }] },
+      { id: "command_code", name: "Command Code", type: "OpenAI Compatible", desc: "Claude Opus 4.7, Sonnet 4.6, GPT-5.5 (200k context)", fields: [{ key: "api_key", label: "Command Code API Key", placeholder: "cmd_..." }] },
+      { id: "groq", name: "Groq", type: "OpenAI Compatible", desc: "Llama 3.3, DeepSeek R1 ultra-low latency inference", fields: [{ key: "api_key", label: "Groq API Key", placeholder: "gsk_..." }] },
+      { id: "openrouter", name: "OpenRouter", type: "OpenAI Compatible", desc: "Unified multi-provider API router", fields: [{ key: "api_key", label: "OpenRouter API Key", placeholder: "sk-or-..." }] },
+      { id: "deepseek", name: "DeepSeek", type: "OpenAI Compatible", desc: "DeepSeek V3 & R1 official API", fields: [{ key: "api_key", label: "DeepSeek API Key", placeholder: "sk-..." }] },
+      { id: "opencode", name: "OpenCode", type: "OpenAI Compatible", desc: "OpenCode standard proxy endpoint", fields: [{ key: "api_key", label: "OpenCode API Key", placeholder: "oc_..." }] },
+      { id: "opencode_zen", name: "OpenCode Zen", type: "Subscription", desc: "OpenCode Zen coding endpoint", fields: [{ key: "api_key", label: "Zen API Key", placeholder: "..." }] },
+      { id: "orcarouter", name: "OrcaRouter", type: "Imported Proxy", desc: "Imported upstream routing connection", fields: [{ key: "api_key", label: "API Key", placeholder: "..." }] },
+      { id: "tokenrouter", name: "TokenRouter", type: "Imported Proxy", desc: "Imported token routing connection", fields: [{ key: "api_key", label: "API Key", placeholder: "..." }] },
+      { id: "agentrouter", name: "AgentRouter", type: "Imported Proxy", desc: "Imported agent routing connection", fields: [{ key: "api_key", label: "API Key", placeholder: "..." }] },
+      { id: "qwen_cloud_token_plan", name: "Qwen Cloud", type: "Token Plan", desc: "Qwen / Alibaba Cloud token plan", fields: [{ key: "token", label: "Token", placeholder: "..." }, { key: "api_key", label: "API Key", placeholder: "..." }] },
       { id: "codex", name: "OpenAI / Codex", type: "Subscription / Key", desc: "GPT-4o, o1, o3-mini official API", fields: [{ key: "api_key", label: "OpenAI API Key", placeholder: "sk-proj-..." }] },
-      { id: "claude", name: "Anthropic Claude", type: "Subscription / Key", desc: "Claude 3.5 Sonnet / 3.7 Sonnet native API", fields: [{ key: "api_key", label: "Anthropic Key", placeholder: "sk-ant-api03-..." }] },
+      { id: "claude", name: "Anthropic Claude", type: "Subscription / Key", desc: "Claude 3.5 Sonnet / 3.7 Sonnet native API", fields: [{ key: "api_key", label: "Anthropic Key", placeholder: "sk-ant-..." }] },
       { id: "copilot", name: "GitHub Copilot", type: "OAuth Token", desc: "Copilot Chat upstream proxy", fields: [{ key: "token", label: "GitHub / Copilot Token", placeholder: "gho_..." }] },
       { id: "vertex", name: "Google Vertex AI", type: "Cloud ($300 Credit)", desc: "Gemini 2.5 Flash / Pro via Vertex Studio", fields: [{ key: "api_key", label: "Vertex / GCP API Key", placeholder: "AIzaSy..." }] },
       { id: "custom", name: "Custom Provider", type: "OpenAI Compatible", desc: "Any custom endpoint and API key", fields: [{ key: "endpoint", label: "Base URL / Endpoint", placeholder: "https://my-api.com/v1/chat/completions" }, { key: "api_key", label: "API Key", placeholder: "sk-custom..." }] }
     ];
 
     let currentConfig = { providers: {} };
+    let latestRecentRequests = [];
+    let isUserTyping = false;
+    let modelSearchQuery = {};
 
     function switchTab(tabId) {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.getElementById('tab-btn-' + tabId).classList.add('active');
+      const activeBtn = document.getElementById('tab-btn-' + tabId);
+      if (activeBtn) activeBtn.classList.add('active');
       ['overview', 'providers', 'playground'].forEach(t => {
-        document.getElementById('tab-' + t).classList.toggle('hidden', t !== tabId);
+        const sec = document.getElementById('tab-' + t);
+        if (sec) sec.classList.toggle('hidden', t !== tabId);
       });
-      document.getElementById('page-title').innerText = tabId.charAt(0).toUpperCase() + tabId.slice(1);
+      const pt = document.getElementById('page-title');
+      if (pt) pt.innerText = tabId.charAt(0).toUpperCase() + tabId.slice(1);
+    }
+
+    function formatRelativeTime(timestamp) {
+      const now = Math.floor(Date.now() / 1000);
+      const diff = Math.max(0, now - Math.floor(timestamp));
+      if (diff < 5) return 'now';
+      if (diff < 60) return `${diff}s`;
+      if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+      return `${Math.floor(diff / 3600)}h`;
+    }
+
+    function formatK(num) {
+      const n = Number(num) || 0;
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+      return String(n);
+    }
+
+    function formatTokens(tIn, tOut) {
+      return `${formatK(tIn)}↑ ${formatK(tOut)}↓`;
     }
 
     async function loadData() {
@@ -206,78 +378,505 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
           fetch('/api/config').then(r => r.json())
         ]);
 
-        document.getElementById('stat-total-requests').innerText = healthRes.metrics.total_requests || 0;
-        document.getElementById('stat-saved-tokens').innerText = (healthRes.metrics.saved_tokens_approx || 0).toLocaleString();
-        document.getElementById('stat-active-providers').innerText = (healthRes.available_providers || []).join(' → ') || 'None ready';
+        const totalReqEl = document.getElementById('stat-total-requests');
+        if (totalReqEl) totalReqEl.innerText = healthRes.metrics?.total_requests || 0;
+        const savedTokEl = document.getElementById('stat-saved-tokens');
+        if (savedTokEl) savedTokEl.innerText = (healthRes.metrics?.saved_tokens_approx || 0).toLocaleString();
+        const activeProvEl = document.getElementById('stat-active-providers');
+        if (activeProvEl) activeProvEl.innerText = (healthRes.available_providers || []).join(' → ') || 'None ready';
 
         currentConfig = configRes;
-        renderProviders(configRes.providers, healthRes.available_providers || []);
+        if (!isUserTyping) {
+          renderProviders(configRes.providers || {}, healthRes.available_providers || []);
+        }
+        renderTopology(configRes.providers || {}, latestRecentRequests);
       } catch (err) {
         console.error('Failed to load data', err);
       }
     }
 
+    async function fetchRecentRequests() {
+      try {
+        const res = await fetch('/api/recent-requests?limit=15');
+        const data = await res.json();
+        if (data.status === 'success' && Array.isArray(data.requests)) {
+          latestRecentRequests = data.requests;
+          renderRecentRequests(data.requests);
+          if (currentConfig.providers) {
+            renderTopology(currentConfig.providers, latestRecentRequests);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch recent requests', err);
+      }
+    }
+
+    function renderRecentRequests(requests) {
+      const tbody = document.getElementById('recent-requests-body');
+      if (!tbody) return;
+
+      if (!requests || requests.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" class="py-6 text-center text-zinc-500 font-sans">
+              No recent requests recorded yet. Test a model in Playground or run Test All Models!
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = requests.map(r => {
+        const isOk = r.status === 'ok';
+        const statusBadge = isOk
+          ? `<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">200 OK</span>`
+          : `<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-rose-500/10 text-rose-400 border border-rose-500/20" title="${escapeHtml(r.error || 'Error')}">ERR</span>`;
+        
+        return `
+          <tr class="hover:bg-zinc-900/50 transition">
+            <td class="py-2.5 font-medium text-zinc-200 max-w-[200px] truncate" title="${escapeHtml(r.model || '')}">
+              ${escapeHtml(r.model || 'unknown')}
+            </td>
+            <td class="py-2.5">
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300 border border-border">
+                ${escapeHtml(r.provider || 'router')}
+              </span>
+            </td>
+            <td class="py-2.5 text-zinc-400">
+              ${formatTokens(r.tokens_in, r.tokens_out)}
+            </td>
+            <td class="py-2.5 text-zinc-400">
+              ${r.latency_ms != null ? r.latency_ms + 'ms' : '-'}
+            </td>
+            <td class="py-2.5">
+              ${statusBadge}
+            </td>
+            <td class="py-2.5 text-right text-muted">
+              ${formatRelativeTime(r.timestamp)}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderTopology(providers, recentRequests) {
+      const activeList = [];
+      const errorList = [];
+      const recentList = [];
+
+      const now = Math.floor(Date.now() / 1000);
+      const recentProvidersSet = new Set();
+      (recentRequests || []).forEach(r => {
+        if (r.timestamp && (now - r.timestamp <= 600) && r.provider) {
+          recentProvidersSet.add(r.provider);
+        }
+      });
+
+      const metaMap = new Map(PROVIDER_METADATA.map(m => [m.id, m]));
+      const allProviderKeys = new Set([...metaMap.keys(), ...Object.keys(providers)]);
+
+      allProviderKeys.forEach(pId => {
+        const conf = providers[pId] || {};
+        const meta = metaMap.get(pId);
+        const name = meta ? meta.name : pId.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        const testRes = conf.test_results || {};
+        const modelKeys = Object.keys(testRes);
+        const hasOk = modelKeys.some(m => testRes[m]?.status === 'ok');
+        const hasErr = modelKeys.some(m => testRes[m]?.status === 'error') || conf.last_test_status === 'error';
+        const isOk = conf.last_test_status === 'ok' || hasOk;
+
+        if (isOk) {
+          activeList.push({ id: pId, name: name, okCount: modelKeys.filter(m => testRes[m]?.status === 'ok').length });
+        } else if (hasErr) {
+          const firstErrModel = modelKeys.find(m => testRes[m]?.status === 'error');
+          const errSnippet = firstErrModel ? testRes[firstErrModel]?.error : (conf.last_error || 'Upstream error');
+          errorList.push({ id: pId, name: name, error: errSnippet });
+        }
+
+        if (recentProvidersSet.has(pId)) {
+          recentList.push({ id: pId, name: name });
+        }
+      });
+
+      // Update Summary Badge
+      const summaryEl = document.getElementById('topology-summary');
+      if (summaryEl) {
+        summaryEl.innerText = `${activeList.length} active · ${errorList.length} error`;
+      }
+
+      // Counts
+      const activeCountEl = document.getElementById('badge-active-count');
+      if (activeCountEl) activeCountEl.innerText = activeList.length;
+      const recentCountEl = document.getElementById('badge-recent-count');
+      if (recentCountEl) recentCountEl.innerText = recentList.length;
+      const errorCountEl = document.getElementById('badge-error-count');
+      if (errorCountEl) errorCountEl.innerText = errorList.length;
+
+      // Active Container
+      const activeCont = document.getElementById('topology-active-list');
+      if (activeCont) {
+        if (activeList.length === 0) {
+          activeCont.innerHTML = '<div class="text-xs text-zinc-500 py-1 font-mono">None active yet (run Test All Models)</div>';
+        } else {
+          activeCont.innerHTML = activeList.map(a => `
+            <div class="flex items-center justify-between px-2.5 py-1.5 rounded bg-zinc-800/60 border border-emerald-500/20 text-xs">
+              <span class="font-medium text-zinc-200">${escapeHtml(a.name)}</span>
+              <span class="text-[10px] font-mono text-emerald-400">${a.okCount > 0 ? a.okCount + ' OK' : 'online'}</span>
+            </div>
+          `).join('');
+        }
+      }
+
+      // Recent Container
+      const recentCont = document.getElementById('topology-recent-list');
+      if (recentCont) {
+        if (recentList.length === 0) {
+          recentCont.innerHTML = '<div class="text-xs text-zinc-500 py-1 font-mono">No recent traffic (last 10m)</div>';
+        } else {
+          recentCont.innerHTML = recentList.map(r => `
+            <div class="flex items-center justify-between px-2.5 py-1.5 rounded bg-zinc-800/60 border border-blue-500/20 text-xs">
+              <span class="font-medium text-zinc-200">${escapeHtml(r.name)}</span>
+              <span class="text-[10px] font-mono text-blue-400">traffic</span>
+            </div>
+          `).join('');
+        }
+      }
+
+      // Error Container
+      const errorCont = document.getElementById('topology-error-list');
+      if (errorCont) {
+        if (errorList.length === 0) {
+          errorCont.innerHTML = '<div class="text-xs text-zinc-500 py-1 font-mono">No failing providers</div>';
+        } else {
+          errorCont.innerHTML = errorList.map(e => `
+            <div class="px-2.5 py-1.5 rounded bg-zinc-800/60 border border-rose-500/20 text-xs space-y-0.5">
+              <div class="flex items-center justify-between">
+                <span class="font-medium text-zinc-200">${escapeHtml(e.name)}</span>
+                <span class="text-[10px] font-mono text-rose-400">failed</span>
+              </div>
+              <div class="text-[10px] text-rose-400/80 truncate font-mono" title="${escapeHtml(e.error || '')}">${escapeHtml(e.error || 'Error')}</div>
+            </div>
+          `).join('');
+        }
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
     function renderProviders(savedProviders, availableList) {
       const container = document.getElementById('providers-container');
+      if (!container) return;
       container.innerHTML = '';
 
-      PROVIDER_METADATA.forEach(p => {
+      const metaMap = new Map(PROVIDER_METADATA.map(m => [m.id, m]));
+      const displayList = [...PROVIDER_METADATA];
+
+      // Add union of providers from savedProviders that aren't already in metadata
+      Object.keys(savedProviders).sort().forEach(k => {
+        if (!metaMap.has(k)) {
+          const saved = savedProviders[k] || {};
+          const fieldKeys = Object.keys(saved).filter(f => 
+            !['enabled', 'source', 'models', 'test_results', 'last_test_status', 'last_error', 'models_endpoint', 'endpoint'].includes(f)
+          );
+          const fields = fieldKeys.length > 0
+            ? fieldKeys.map(fk => ({ key: fk, label: fk.replace(/_/g, ' ').toUpperCase(), placeholder: '...' }))
+            : [
+                { key: 'api_key', label: 'API Key', placeholder: '...' },
+                { key: 'token', label: 'Token', placeholder: '...' }
+              ];
+          
+          const readableName = k.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+          const sourceLabel = saved.source ? `Imported (${saved.source})` : 'Imported (OmniRoute/9Router)';
+          
+          displayList.push({
+            id: k,
+            name: readableName,
+            type: sourceLabel,
+            desc: `Synced upstream connection (${k})`,
+            fields: fields,
+            dynamic: true
+          });
+        }
+      });
+
+      displayList.forEach(p => {
         const saved = savedProviders[p.id] || {};
-        const isReady = availableList.includes(p.id);
+        const testRes = saved.test_results || {};
+        const modelKeys = Object.keys(testRes);
+        const okCount = modelKeys.filter(m => testRes[m]?.status === 'ok').length;
+        const errCount = modelKeys.filter(m => testRes[m]?.status === 'error').length;
+        
+        let statusBadge = '';
+        if (saved.last_test_status === 'ok' || okCount > 0) {
+          statusBadge = `<span class="text-[10px] px-2 py-0.5 rounded font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">ONLINE (${okCount} OK)</span>`;
+        } else if (saved.last_test_status === 'error' || errCount > 0) {
+          statusBadge = `<span class="text-[10px] px-2 py-0.5 rounded font-mono bg-rose-500/10 text-rose-400 border border-rose-500/20" title="${escapeHtml(saved.last_error || 'Test failed')}">ERROR</span>`;
+        } else if (availableList.includes(p.id)) {
+          statusBadge = `<span class="text-[10px] px-2 py-0.5 rounded font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20">CONFIGURED (UNTESTED)</span>`;
+        } else {
+          statusBadge = `<span class="text-[10px] px-2 py-0.5 rounded font-mono bg-zinc-800 text-muted">NOT CONFIGURED</span>`;
+        }
+
         const card = document.createElement('div');
         card.className = "bg-card border border-border rounded-xl p-5 space-y-4";
 
         let fieldsHtml = '';
         p.fields.forEach(f => {
           const val = saved[f.key] || '';
+          const isConfigured = val && (val.startsWith('«redacted:') || val.length > 0);
+          const badge = isConfigured
+            ? `<span class="text-[10px] text-emerald-400 font-mono">Configured</span>`
+            : `<span class="text-[10px] text-zinc-500 font-mono">Empty</span>`;
+
           fieldsHtml += `
             <div>
-              <label class="text-[11px] font-medium text-muted block mb-1">${f.label}</label>
-              <input type="text" id="input-${p.id}-${f.key}" value="${val}" placeholder="${f.placeholder}" 
+              <div class="flex justify-between items-center mb-1">
+                <label class="text-[11px] font-medium text-muted block">${f.label}</label>
+                ${badge}
+              </div>
+              <input type="text" id="input-${p.id}-${f.key}" 
+                value="" 
+                placeholder="${isConfigured ? '•••••••••••••••• (Leave blank to preserve)' : f.placeholder}" 
+                onfocus="isUserTyping = true" 
+                onblur="isUserTyping = false"
                 class="w-full bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500">
             </div>
           `;
         });
+
+        const cachedModels = saved.models || [];
+        const modelsVisible = cachedModels.length > 0;
 
         card.innerHTML = `
           <div class="flex items-start justify-between">
             <div>
               <div class="font-semibold text-zinc-100 flex items-center gap-2">
                 ${p.name}
-                <span class="text-[10px] px-2 py-0.5 rounded font-mono ${isReady ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-zinc-800 text-muted'}">
-                  ${isReady ? 'READY' : 'NOT CONFIGURED'}
-                </span>
+                ${statusBadge}
               </div>
               <div class="text-xs text-muted mt-0.5">${p.desc}</div>
+              ${saved.last_error ? `<div class="text-[11px] text-rose-400 font-mono mt-1 truncate max-w-sm" title="${escapeHtml(saved.last_error)}">⚠️ ${escapeHtml(saved.last_error)}</div>` : ''}
             </div>
             <div class="flex items-center gap-1.5">
               <button onclick="fetchProviderToken('${p.id}')" id="btn-token-${p.id}" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-emerald-400 rounded text-xs transition flex items-center gap-1">
-                <i data-lucide="key" class="w-3 h-3"></i> Fetch Token
+                <i data-lucide="key" class="w-3 h-3"></i> Fetch
               </button>
               <button onclick="fetchProviderModels('${p.id}')" id="btn-fetch-${p.id}" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded text-xs transition flex items-center gap-1">
                 <i data-lucide="refresh-cw" class="w-3 h-3"></i> Models
               </button>
-              <button onclick="testSingleProvider('${p.id}')" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition">
+              <button onclick="testSingleProvider('${p.id}')" id="btn-test-${p.id}" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition">
                 Test
               </button>
             </div>
           </div>
-          <div id="models-list-${p.id}" class="hidden text-xs bg-zinc-900/90 border border-border p-2.5 rounded-lg max-h-36 overflow-y-auto space-y-1 font-mono text-zinc-300"></div>
+
+          <div id="models-container-${p.id}" class="${modelsVisible ? '' : 'hidden'} text-xs bg-zinc-900/90 border border-border p-3 rounded-lg space-y-2">
+            <div class="flex items-center justify-between pb-1.5 border-b border-border/50">
+              <span class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide">
+                Available Models (<span id="models-count-${p.id}">${cachedModels.length}</span>)
+              </span>
+              <input type="text" placeholder="Filter models..." id="search-models-${p.id}" oninput="filterModels('${p.id}')"
+                class="bg-zinc-800 border border-border/80 px-2 py-0.5 rounded text-[11px] font-mono text-zinc-300 focus:outline-none w-32">
+            </div>
+            <div id="models-list-${p.id}" class="max-h-40 overflow-y-auto space-y-1 font-mono text-zinc-300">
+              <!-- Rendered via renderModelsList -->
+            </div>
+          </div>
+
           ${fieldsHtml ? `<div class="space-y-2.5 pt-2 border-t border-border/50">${fieldsHtml}</div>` : '<div class="text-xs text-emerald-400/80 pt-1">Zero configuration required (Keyless public access)</div>'}
         `;
         container.appendChild(card);
+
+        if (modelsVisible) {
+          renderModelsList(p.id, cachedModels, testRes);
+        }
       });
       lucide.createIcons();
     }
 
+    function renderModelsList(providerId, models, testResults) {
+      const listEl = document.getElementById(`models-list-${providerId}`);
+      if (!listEl) return;
+
+      const query = (modelSearchQuery[providerId] || '').toLowerCase();
+      const filtered = models.filter(m => m.toLowerCase().includes(query));
+
+      if (filtered.length === 0) {
+        listEl.innerHTML = '<div class="text-zinc-500 py-1 text-center">No matching models</div>';
+        return;
+      }
+
+      listEl.innerHTML = filtered.map(m => {
+        const tr = (testResults || {})[m];
+        let testBadge = '';
+        if (tr) {
+          if (tr.status === 'ok') {
+            testBadge = `<span class="text-emerald-400 text-[10px]" title="Latency: ${tr.latency_ms}ms">✓ ${tr.latency_ms}ms</span>`;
+          } else {
+            testBadge = `<span class="text-rose-400 text-[10px]" title="${escapeHtml(tr.error || '')}">✗ err</span>`;
+          }
+        }
+
+        const routedId = `${providerId}/${m}`;
+        return `
+          <div class="flex items-center justify-between py-1 px-1.5 rounded hover:bg-zinc-800/80 transition group">
+            <span class="truncate max-w-[180px] text-zinc-200" title="${escapeHtml(m)}">${escapeHtml(m)}</span>
+            <div class="flex items-center gap-1.5">
+              ${testBadge}
+              <button onclick="testIndividualModel('${providerId}', '${escapeHtml(m)}')" class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300">test</button>
+              <button onclick="copyToClipboard('${escapeHtml(routedId)}')" class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-muted hover:text-zinc-200" title="Copy ${escapeHtml(routedId)}">copy</button>
+              <button onclick="useModelInPlayground('${escapeHtml(routedId)}')" class="text-[10px] px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30">use</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function filterModels(providerId) {
+      const input = document.getElementById(`search-models-${providerId}`);
+      if (input) {
+        modelSearchQuery[providerId] = input.value.trim();
+        const conf = (currentConfig.providers || {})[providerId] || {};
+        renderModelsList(providerId, conf.models || [], conf.test_results || {});
+      }
+    }
+
+    function copyToClipboard(text) {
+      navigator.clipboard.writeText(text).then(() => {
+        alert('Copied to clipboard: ' + text);
+      }).catch(() => {
+        prompt('Copy model ID:', text);
+      });
+    }
+
+    async function testIndividualModel(providerId, model) {
+      const banner = document.getElementById('test-all-banner');
+      if (banner) {
+        banner.classList.remove('hidden', 'bg-rose-500/10', 'border-rose-500/30', 'text-rose-300', 'bg-emerald-500/10', 'border-emerald-500/30', 'text-emerald-300');
+        banner.classList.add('bg-zinc-800', 'border-border', 'text-zinc-300');
+        banner.innerText = `Testing model ${providerId}/${model}...`;
+      }
+
+      try {
+        const res = await fetch('/api/test-model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: providerId, model: model })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          if (banner) {
+            banner.className = 'text-xs p-3 rounded-lg border bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
+            banner.innerText = `✅ ${providerId}/${model} verified OK (${data.latency_ms}ms)! Response: "${data.preview || ''}"`;
+          }
+        } else {
+          if (banner) {
+            banner.className = 'text-xs p-3 rounded-lg border bg-rose-500/10 border-rose-500/30 text-rose-300';
+            banner.innerText = `❌ ${providerId}/${model} failed (${data.latency_ms}ms): ${data.error}`;
+          }
+        }
+        await loadData();
+        await fetchRecentRequests();
+      } catch (err) {
+        if (banner) {
+          banner.className = 'text-xs p-3 rounded-lg border bg-rose-500/10 border-rose-500/30 text-rose-300';
+          banner.innerText = `Network test error: ${err}`;
+        }
+      }
+    }
+
+    async function testAllModels() {
+      const btn = document.getElementById('btn-test-all');
+      const originalText = btn.innerHTML;
+      btn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Testing All...';
+      btn.disabled = true;
+
+      const banner = document.getElementById('test-all-banner');
+      banner.classList.remove('hidden', 'bg-emerald-500/10', 'bg-rose-500/10', 'border-emerald-500/30', 'border-rose-500/30');
+      banner.classList.add('bg-amber-500/10', 'border-amber-500/30', 'text-amber-300');
+      banner.innerText = '⚡ Testing all configured providers and models in parallel...';
+
+      try {
+        const res = await fetch('/api/test-all-models', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ timeout_per_model: 12 })
+        });
+        const data = await res.json();
+        const ok = data.tested_ok || 0;
+        const err = data.tested_error || 0;
+
+        banner.className = 'text-xs p-3 rounded-lg border ' + (err === 0 && ok > 0 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-zinc-900 border-border text-zinc-200');
+        banner.innerHTML = `
+          <div class="font-semibold mb-1">Test Run Complete: ${ok} models working · ${err} errors</div>
+          <div class="text-[11px] text-muted">Topology and cards updated with honest upstream results.</div>
+        `;
+
+        await loadData();
+        await fetchRecentRequests();
+      } catch (e) {
+        banner.className = 'text-xs p-3 rounded-lg border bg-rose-500/10 border-rose-500/30 text-rose-300';
+        banner.innerText = 'Failed to run test suite: ' + e;
+      } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        lucide.createIcons();
+      }
+    }
+
+    async function fetchAllModels() {
+      const btn = document.getElementById('btn-fetch-all');
+      const originalText = btn.innerHTML;
+      btn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Fetching...';
+      btn.disabled = true;
+
+      const banner = document.getElementById('test-all-banner');
+      banner.classList.remove('hidden');
+      banner.className = 'text-xs p-3 rounded-lg border bg-blue-500/10 border-blue-500/30 text-blue-300';
+      banner.innerText = 'Querying model catalogs across all enabled providers...';
+
+      try {
+        const res = await fetch('/api/fetch-all-models', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+          banner.className = 'text-xs p-3 rounded-lg border bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
+          banner.innerText = `✅ Auto-fetched models for ${data.total_providers} providers (total ${data.total_models} models available).`;
+          await loadData();
+        } else {
+          banner.className = 'text-xs p-3 rounded-lg border bg-rose-500/10 border-rose-500/30 text-rose-300';
+          banner.innerText = `Failed to fetch models: ${data.error || data.message}`;
+        }
+      } catch (e) {
+        banner.className = 'text-xs p-3 rounded-lg border bg-rose-500/10 border-rose-500/30 text-rose-300';
+        banner.innerText = 'Network error fetching all models: ' + e;
+      } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        lucide.createIcons();
+      }
+    }
+
     async function saveAllProviders() {
       const updates = {};
-      PROVIDER_METADATA.forEach(p => {
-        updates[p.id] = { enabled: true };
-        p.fields.forEach(f => {
-          const el = document.getElementById(`input-${p.id}-${f.key}`);
-          if (el) updates[p.id][f.key] = el.value.trim();
-        });
+      document.querySelectorAll('input[id^="input-"]').forEach(el => {
+        const raw = el.id.replace('input-', '');
+        const lastDash = raw.lastIndexOf('-');
+        if (lastDash !== -1) {
+          const provId = raw.substring(0, lastDash);
+          const key = raw.substring(lastDash + 1);
+          if (!updates[provId]) updates[provId] = { enabled: true };
+          if (el.value.trim() !== '') {
+            // Only update if user typed something new (blank preserves existing redacted secret)
+            updates[provId][key] = el.value.trim();
+          }
+        }
       });
 
       try {
@@ -288,6 +887,7 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
         });
         if (res.ok) {
           alert('Providers configuration saved successfully!');
+          isUserTyping = false;
           loadData();
         }
       } catch (e) {
@@ -298,7 +898,7 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
     async function fetchProviderToken(providerId) {
       const btn = document.getElementById(`btn-token-${providerId}`);
       const originalText = btn.innerHTML;
-      btn.innerHTML = '<i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i> Fetching...';
+      btn.innerHTML = '<i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i>';
       btn.disabled = true;
 
       try {
@@ -324,10 +924,10 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
     }
 
     async function syncFromSource(sourceName) {
-      const btn = event.currentTarget || event.target;
-      const originalText = btn.innerHTML;
-      btn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Syncing...';
-      btn.disabled = true;
+      const banner = document.getElementById('import-status-banner');
+      banner.classList.remove('hidden');
+      banner.className = 'text-xs p-3 rounded-lg border bg-zinc-900 border-border text-zinc-300';
+      banner.innerText = `Importing active sessions from ${sourceName}...`;
 
       try {
         const res = await fetch('/api/sync-source', {
@@ -337,25 +937,24 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
         });
         const data = await res.json();
         if (data.status === 'success') {
-          alert(`⚡ Synced ${data.imported_count} providers from ${sourceName}:\n${data.imported_providers.join(', ')}`);
+          banner.className = 'text-xs p-3 rounded-lg border bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
+          banner.innerHTML = `⚡ Synced <strong>${data.imported_count}</strong> providers from <strong>${escapeHtml(sourceName)}</strong>: ${data.imported_providers.join(', ')}`;
           loadData();
         } else {
-          alert(`Sync ${sourceName}: ` + (data.message || data.error));
+          banner.className = 'text-xs p-3 rounded-lg border bg-rose-500/10 border-rose-500/30 text-rose-300';
+          banner.innerText = `Sync ${sourceName}: ` + (data.message || data.error);
         }
       } catch (e) {
-        alert('Sync error: ' + e);
-      } finally {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-        lucide.createIcons();
+        banner.className = 'text-xs p-3 rounded-lg border bg-rose-500/10 border-rose-500/30 text-rose-300';
+        banner.innerText = 'Sync error: ' + e;
       }
     }
 
     async function autoImportAllTokens() {
-      const btn = event.target;
-      const originalText = btn.innerHTML;
-      btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Importing...';
-      btn.disabled = true;
+      const banner = document.getElementById('import-status-banner');
+      banner.classList.remove('hidden');
+      banner.className = 'text-xs p-3 rounded-lg border bg-zinc-900 border-border text-zinc-300';
+      banner.innerText = 'Scanning local IDEs and CLI credentials (Cursor, Antigravity, Claude CLI, Copilot)...';
 
       try {
         const res = await fetch('/api/fetch-token', {
@@ -365,27 +964,24 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
         });
         const data = await res.json();
         if (data.status === 'success') {
-          alert(`🎉 Successfully imported credentials for ${data.imported_count} providers:\n${data.imported_providers.join(', ')}`);
+          banner.className = 'text-xs p-3 rounded-lg border bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
+          banner.innerHTML = `🎉 Successfully imported credentials for <strong>${data.imported_count}</strong> providers: ${data.imported_providers.join(', ')}`;
           loadData();
         } else {
-          alert('Failed to import tokens: ' + (data.message || data.error));
+          banner.className = 'text-xs p-3 rounded-lg border bg-rose-500/10 border-rose-500/30 text-rose-300';
+          banner.innerText = 'Failed to import tokens: ' + (data.message || data.error);
         }
       } catch (e) {
-        alert('Error: ' + e);
-      } finally {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-        lucide.createIcons();
+        banner.className = 'text-xs p-3 rounded-lg border bg-rose-500/10 border-rose-500/30 text-rose-300';
+        banner.innerText = 'Error: ' + e;
       }
     }
 
     async function fetchProviderModels(providerId) {
       const btn = document.getElementById(`btn-fetch-${providerId}`);
       const originalText = btn.innerHTML;
-      btn.innerHTML = '<i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i> Fetching...';
+      btn.innerHTML = '<i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i>';
       btn.disabled = true;
-
-      const container = document.getElementById(`models-list-${providerId}`);
 
       try {
         const res = await fetch('/api/fetch-models', {
@@ -395,19 +991,13 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
         });
         const data = await res.json();
         if (data.status === 'success' && data.models) {
-          container.classList.remove('hidden');
-          container.innerHTML = `
-            <div class="text-[11px] font-semibold text-zinc-400 mb-1 flex justify-between items-center">
-              <span>AVAILABLE MODELS (${data.models.length})</span>
-              <button onclick="document.getElementById('models-list-${providerId}').classList.add('hidden')" class="text-zinc-500 hover:text-zinc-300">✕</button>
-            </div>
-            ${data.models.map(m => `
-              <div class="flex items-center justify-between py-0.5 hover:bg-zinc-800 px-1 rounded cursor-pointer" onclick="useModelInPlayground('${providerId}/${m}')">
-                <span class="truncate">${m}</span>
-                <span class="text-[10px] text-blue-400">use</span>
-              </div>
-            `).join('')}
-          `;
+          const cont = document.getElementById(`models-container-${providerId}`);
+          if (cont) cont.classList.remove('hidden');
+          const countEl = document.getElementById(`models-count-${providerId}`);
+          if (countEl) countEl.innerText = data.models.length;
+          const conf = (currentConfig.providers || {})[providerId] || {};
+          conf.models = data.models;
+          renderModelsList(providerId, data.models, conf.test_results || {});
         } else {
           alert(`Failed to fetch models for ${providerId}: ${data.error || data.message || 'Unknown error'}`);
         }
@@ -422,11 +1012,12 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
 
     function useModelInPlayground(modelId) {
       switchTab('playground');
-      document.getElementById('play-model').value = modelId;
+      const pm = document.getElementById('play-model');
+      if (pm) pm.value = modelId;
     }
 
     async function testSingleProvider(providerId) {
-      const btn = event.target;
+      const btn = document.getElementById(`btn-test-${providerId}`) || event.target;
       const originalText = btn.innerText;
       btn.innerText = 'Testing...';
       btn.disabled = true;
@@ -443,6 +1034,8 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
         } else {
           alert(`❌ ${providerId} test failed (${data.latency_ms}ms):\n${data.error || data.message}`);
         }
+        await loadData();
+        await fetchRecentRequests();
       } catch (e) {
         alert('Network test error: ' + e);
       } finally {
@@ -451,11 +1044,48 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
       }
     }
 
+    let cachedAllModels = [];
+
+    async function populateModelDatalist() {
+      const dl = document.getElementById('play-model-options');
+      const filterSel = document.getElementById('play-provider-filter');
+      if (!dl || !filterSel) return;
+      try {
+        if (cachedAllModels.length === 0) {
+          const res = await fetch('/v1/models');
+          const data = await res.json();
+          cachedAllModels = (data.data || []).map(m => ({ id: m.id, owned_by: m.owned_by || (m.id.includes('/') ? m.id.split('/')[0] : 'router') }));
+        }
+        const filter = filterSel.value;
+        // Rebuild provider filter options (keep selection)
+        const providers = [...new Set(cachedAllModels.map(m => m.owned_by))].sort();
+        const prev = filterSel.value;
+        filterSel.innerHTML = '<option value="">All providers</option>' +
+          providers.map(p => `<option value="${escapeHtml(p)}"${p === prev ? ' selected' : ''}>${escapeHtml(p)}</option>`).join('');
+        const activeFilter = filterSel.value;
+        dl.innerHTML = cachedAllModels
+          .filter(m => !activeFilter || m.owned_by === activeFilter)
+          .map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.owned_by)}</option>`)
+          .join('');
+      } catch (e) {
+        console.error('Failed to load models for playground', e);
+      }
+    }
+
+    function isErrorResponseText(text) {
+      if (!text) return false;
+      const t = String(text);
+      return t.includes('HTTP 4') || t.includes('Error') || t.includes('error') || t.includes('notice');
+    }
+
     async function runPlaygroundTest() {
       const model = document.getElementById('play-model').value.trim();
       const prompt = document.getElementById('play-prompt').value.trim();
       const out = document.getElementById('play-output');
+      const meta = document.getElementById('play-output-meta');
       out.innerText = 'Connecting to KiteRouter...';
+      if (meta) meta.innerText = '';
+      const started = performance.now();
 
       try {
         const res = await fetch('/v1/chat/completions', {
@@ -468,12 +1098,29 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
           })
         });
         const data = await res.json();
+        const latencyMs = Math.round(performance.now() - started);
+        let content = '';
+        let usage = data.usage || {};
         if (data.choices && data.choices[0]) {
-          out.innerText = data.choices[0].message.content;
+          content = data.choices[0].message.content;
         } else {
-          out.innerText = JSON.stringify(data, null, 2);
+          content = JSON.stringify(data, null, 2);
         }
+        const tokensIn = usage.prompt_tokens != null ? usage.prompt_tokens : Math.round((model.length + prompt.length) / 4);
+        const tokensOut = usage.completion_tokens != null ? usage.completion_tokens : Math.round((content || '').length / 4);
+        if (meta) meta.innerText = `${latencyMs}ms · ${formatTokens(tokensIn, tokensOut)}`;
+        if (isErrorResponseText(content)) {
+          out.className = 'bg-rose-950/60 border border-rose-500/40 p-4 rounded-lg text-xs font-mono text-rose-300 min-h-[100px] whitespace-pre-wrap';
+        } else {
+          out.className = 'bg-black/60 border border-border p-4 rounded-lg text-xs font-mono text-zinc-300 min-h-[100px] whitespace-pre-wrap';
+        }
+        out.innerText = content;
+        await fetchRecentRequests();
+        await populateModelDatalist();
       } catch (e) {
+        const latencyMs = Math.round(performance.now() - started);
+        if (meta) meta.innerText = `${latencyMs}ms · failed`;
+        out.className = 'bg-rose-950/60 border border-rose-500/40 p-4 rounded-lg text-xs font-mono text-rose-300 min-h-[100px] whitespace-pre-wrap';
         out.innerText = 'Error: ' + e;
       }
     }
@@ -481,7 +1128,10 @@ Model:    claude-3-5-sonnet (or kr/..., glm/..., cu/...)</pre>
     document.addEventListener('DOMContentLoaded', () => {
       lucide.createIcons();
       loadData();
+      fetchRecentRequests();
+      populateModelDatalist();
       setInterval(loadData, 5000);
+      setInterval(fetchRecentRequests, 2500);
     });
   </script>
 </body>

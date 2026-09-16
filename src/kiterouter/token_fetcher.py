@@ -135,8 +135,14 @@ class TokenFetcher:
                     p_clean = "antigravity"
                 elif p_clean == "github":
                     p_clean = "copilot"
+                elif p_clean in ("cmd", "commandcode"):
+                    p_clean = "command_code"
 
-                if target_provider and p_clean != target_provider:
+                target_clean = target_provider.lower().replace("-", "_") if target_provider else None
+                if target_clean in ("cmd", "commandcode"):
+                    target_clean = "command_code"
+
+                if target_clean and p_clean != target_clean:
                     continue
 
                 if p_clean not in results:
@@ -422,6 +428,9 @@ class TokenFetcher:
             return creds
         elif p == "codex":
             return TokenFetcher.fetch_codex_credentials()
+        elif p in ("command_code", "cmd", "command-code"):
+            omni = TokenFetcher.fetch_from_omniroute("command_code")
+            return omni.get("command_code", {})
         elif p in ("opencode_go", "opencode_zen"):
             r9 = TokenFetcher.fetch_from_9router()
             if "opencode_go" in r9 or "opencode_zen" in r9:

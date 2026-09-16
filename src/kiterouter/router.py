@@ -14,6 +14,7 @@ from kiterouter.providers.kiro import KiroProvider
 from kiterouter.providers.glm import GLMProvider
 from kiterouter.providers.minimax import MiniMaxProvider
 from kiterouter.providers.codex import CodexProvider
+from kiterouter.providers.command_code import CommandCodeProvider
 from kiterouter.providers.claude import ClaudeProvider
 from kiterouter.providers.copilot import CopilotProvider
 from kiterouter.providers.vertex import VertexProvider
@@ -42,17 +43,44 @@ class ProviderRouter:
             "glm": GLMProvider(self.config.get("glm")),
             "minimax": MiniMaxProvider(self.config.get("minimax")),
             "codex": CodexProvider(self.config.get("codex")),
+            "command_code": CommandCodeProvider(self.config.get("command_code")),
             "claude": ClaudeProvider(self.config.get("claude")),
             "copilot": CopilotProvider(self.config.get("copilot")),
             "vertex": VertexProvider(self.config.get("vertex")),
             "custom": CustomProvider(self.config.get("custom")),
         }
+        # Dynamically register any imported/custom configured providers
+        known_endpoints = {
+            "groq": ("https://api.groq.com/openai/v1/chat/completions", ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b"]),
+            "openrouter": ("https://openrouter.ai/api/v1/chat/completions", ["anthropic/claude-3.5-sonnet", "openai/gpt-4o"]),
+            "deepseek": ("https://api.deepseek.com/v1/chat/completions", ["deepseek-chat", "deepseek-reasoner"]),
+            "opencode": ("https://api.opencode.ai/v1/chat/completions", ["claude-3-5-sonnet", "gpt-4o"]),
+        }
+        for p_name, p_conf in self.config.items():
+            if p_name not in self.providers and isinstance(p_conf, dict):
+                ep = p_conf.get("endpoint")
+                models = p_conf.get("models")
+                if not ep and p_name in known_endpoints:
+                    ep = known_endpoints[p_name][0]
+                    if not models:
+                        models = known_endpoints[p_name][1]
+                custom_p = CustomProvider({
+                    "endpoint": ep or "https://api.openai.com/v1/chat/completions",
+                    "api_key": p_conf.get("api_key") or p_conf.get("token") or "",
+                    **p_conf
+                })
+                custom_p.name = p_name
+                if models:
+                    custom_p.supported_models = [f"{p_name}/{m}" if not m.startswith(f"{p_name}/") else m for m in models]
+                self.providers[p_name] = custom_p
+
         # 3-Tier fallback hierarchy (Subscription -> Cheap -> Free)
         self.fallback_chain = [
             "cursor",
             "antigravity",
             "claude",
             "codex",
+            "command_code",
             "copilot",
             "opencode_go",
             "glm",
@@ -80,14 +108,33 @@ class ProviderRouter:
     def get_all_models(self) -> List[Dict[str, Any]]:
         """Return all available models grouped across all providers."""
         models = []
+        seen_ids = set()
         for provider_id, provider in self.providers.items():
-            for m in provider.supported_models:
-                models.append({
-                    "id": m,
-                    "object": "model",
-                    "owned_by": provider_id,
-                    "permission": [],
-                })
+            for m in getattr(provider, "supported_models", []):
+                model_id = m if "/" in m else f"{provider_id}/{m}"
+                if model_id not in seen_ids:
+                    seen_ids.add(model_id)
+                    models.append({
+                        "id": model_id,
+                        "raw_id": m.split("/", 1)[1] if "/" in m else m,
+                        "object": "model",
+                        "owned_by": provider_id,
+                        "permission": [],
+                    })
+        # Include any models defined or fetched under config.providers (including imported providers)
+        for p_name, p_conf in self.config.items():
+            if isinstance(p_conf, dict) and "models" in p_conf and isinstance(p_conf["models"], list):
+                for m in p_conf["models"]:
+                    model_id = m if "/" in m else f"{p_name}/{m}"
+                    if model_id not in seen_ids:
+                        seen_ids.add(model_id)
+                        models.append({
+                            "id": model_id,
+                            "raw_id": m.split("/", 1)[1] if "/" in m else m,
+                            "object": "model",
+                            "owned_by": p_name,
+                            "permission": [],
+                        })
         return models
 
     def parse_model_and_provider(self, raw_model: str) -> tuple[Optional[str], str]:
@@ -109,6 +156,10 @@ class ProviderRouter:
             "claude": "claude",
             "cx": "codex",
             "codex": "codex",
+            "cmd": "command_code",
+            "ccp": "command_code",
+            "command-code": "command_code",
+            "command_code": "command_code",
             "gh": "copilot",
             "copilot": "copilot",
             "kr": "kiro",
@@ -129,6 +180,8 @@ class ProviderRouter:
                 target_provider = prefix_map[prefix]
                 if target_provider in self.providers:
                     return target_provider, rest
+            elif prefix in self.providers:
+                return prefix, rest
 
         return None, raw_model
 

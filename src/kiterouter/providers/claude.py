@@ -35,6 +35,40 @@ class ClaudeProvider(BaseProvider):
     async def is_available(self) -> bool:
         return bool(self.api_key or self.mock_mode)
 
+    def _build_headers(self, **kwargs: Any) -> Dict[str, str]:
+        headers: Dict[str, Any] = {
+            "x-api-key": self.api_key or "",
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+
+        # Merge headers from config and kwargs
+        if isinstance(self.config.get("headers"), dict):
+            headers.update(self.config["headers"])
+        if isinstance(kwargs.get("headers"), dict):
+            headers.update(kwargs["headers"])
+
+        for k in ("anthropic-beta", "anthropic_beta"):
+            if k in self.config and self.config[k]:
+                headers["anthropic-beta"] = self.config[k]
+            if k in kwargs and kwargs[k]:
+                headers["anthropic-beta"] = kwargs[k]
+
+        for k in ("anthropic-version", "anthropic_version"):
+            if k in self.config and self.config[k]:
+                headers["anthropic-version"] = self.config[k]
+            if k in kwargs and kwargs[k]:
+                headers["anthropic-version"] = kwargs[k]
+
+        # Crucial fix: header values in httpx MUST be str or bytes, never list/tuple!
+        sanitized: Dict[str, str] = {}
+        for hk, hv in headers.items():
+            if isinstance(hv, (list, tuple)):
+                sanitized[str(hk)] = ",".join(str(item) for item in hv)
+            elif hv is not None:
+                sanitized[str(hk)] = str(hv)
+        return sanitized
+
     async def stream_chat(
         self,
         model: str,
@@ -55,11 +89,7 @@ class ClaudeProvider(BaseProvider):
             yield "data: [DONE]\n\n"
             return
 
-        headers = {
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
+        headers = self._build_headers(**kwargs)
 
         # Format messages for Anthropic (separate system message)
         anthropic_messages = []
