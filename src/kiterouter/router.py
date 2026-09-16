@@ -358,6 +358,16 @@ class ProviderRouter:
                 yield chunk
             return
 
+        if model.startswith("combo/"):
+            avail = ", ".join(self.combos.keys()) or "none"
+            yield create_sse_chunk(
+                f"[KiteRouter Error: Unknown combo '{model[6:]}'. Configured combos: {avail}]",
+                model=model,
+            )
+            yield create_sse_chunk(finish_reason="stop", model=model)
+            yield "data: [DONE]\n\n"
+            return
+
         explicit_provider, clean_model = self.parse_model_and_provider(model)
 
         candidates: List[BaseProvider] = []
