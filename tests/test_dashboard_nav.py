@@ -209,10 +209,25 @@ def test_tooltips_are_suppressed_while_expanded(html):
 
 # ── self-update control ───────────────────────────────────────────────────────
 
-def test_header_has_a_self_update_button(html):
-    assert 'id="btn-update"' in html
-    assert 'id="update-label"' in html
-    assert "runUpdate()" in html
+def test_update_control_lives_in_the_feature_rail(html):
+    """It belongs with the other rail actions, not in the header."""
+    aside = html[html.index('<aside id="app-rail"'): html.index("</aside>")]
+    assert 'id="rail-update"' in aside
+    assert 'id="rail-update-label"' in aside
+    assert 'id="rail-update-dot"' in aside
+    assert "runUpdate()" in aside
+    header = html[html.index("<header"): html.index("</header>")]
+    assert "rail-update" not in header, "the update control should not also sit in the header"
+
+
+def test_update_rail_button_follows_the_collapse_behaviour(html):
+    """Icon + label when expanded; the label hides and the dot carries state."""
+    section = html[html.index("const RAIL_UPDATE_BASE"):]
+    section = section[: section.index("async function loadUpdateStatus")]
+    assert "rail-item" in section, "must keep the rail layout classes"
+    assert "rail-label" in html[html.index('id="rail-update-label"'):][:160]
+    assert "bg-amber-400" in section, "waiting commits should show as an amber dot"
+    assert "hidden" in section, "an up-to-date rail button should hide its dot"
 
 
 def test_update_button_reports_behind_and_local_changes(html):

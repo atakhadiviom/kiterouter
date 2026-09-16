@@ -86,6 +86,13 @@
     </nav>
 
     <div class="py-2 px-2 border-t border-border space-y-0.5 shrink-0">
+      <button onclick="runUpdate()" id="rail-update" aria-label="Update KiteRouter"
+              class="rail-btn rail-item w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100 transition"
+              data-tip="Checking for updates…">
+        <i data-lucide="git-commit-vertical" class="w-4 h-4 shrink-0"></i>
+        <span id="rail-update-label" class="rail-label flex-1 text-left truncate">Checking…</span>
+        <span id="rail-update-dot" class="rail-dot bg-amber-400 hidden"></span>
+      </button>
       <a href="/health" target="_blank" rel="noopener" aria-label="Health endpoint"
          class="rail-btn rail-item w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100 transition"
          data-tip="Health · /health">
@@ -119,11 +126,6 @@
           <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
           <span id="radar-latency">Online</span>
         </span>
-        <button id="btn-update" onclick="runUpdate()" title="Checking for updates…"
-                class="px-3 py-1.5 rounded-lg border border-border text-xs text-zinc-300 hover:bg-zinc-800 transition flex items-center gap-1.5 whitespace-nowrap">
-          <i data-lucide="git-commit-vertical" class="w-3.5 h-3.5"></i>
-          <span id="update-label">Checking…</span>
-        </button>
         <button onclick="downloadConfigBackup()" class="px-3 py-1.5 rounded-lg border border-border text-xs text-zinc-300 hover:bg-zinc-800 transition flex items-center gap-1.5" title="Export clean JSON backup of configuration & combos">
           <i data-lucide="download" class="w-3.5 h-3.5"></i> Backup
         </button>
@@ -1545,52 +1547,65 @@ print(res.choices[0].message.content)</pre>
     }
 
     // ── Self-update ────────────────────────────────────────────────────────
-    // Shows how far behind origin/main the checkout is, and updates in place.
-    // Reloading is done by the server replacing itself, so the PID is kept.
+    // Lives in the rail footer so it follows the collapse behaviour: icon +
+    // label when expanded, icon + status dot when collapsed. Reloading is done
+    // by the server replacing itself, so the PID is kept.
 
-    const UPDATE_TONE = {
-      current: 'px-3 py-1.5 rounded-lg border border-border text-xs text-zinc-300 hover:bg-zinc-800 transition flex items-center gap-1.5 whitespace-nowrap',
-      available: 'px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-600/10 text-xs text-amber-300 hover:bg-amber-600/20 transition flex items-center gap-1.5 whitespace-nowrap',
-      busy: 'px-3 py-1.5 rounded-lg border border-blue-500/40 bg-blue-600/10 text-xs text-blue-300 transition flex items-center gap-1.5 whitespace-nowrap',
-      error: 'px-3 py-1.5 rounded-lg border border-rose-500/40 bg-rose-600/10 text-xs text-rose-300 hover:bg-rose-600/20 transition flex items-center gap-1.5 whitespace-nowrap',
+    const RAIL_UPDATE_BASE =
+      'rail-btn rail-item w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition';
+    const RAIL_UPDATE_TONE = {
+      current: 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100',
+      available: 'text-amber-300 bg-amber-600/10 hover:bg-amber-600/20',
+      busy: 'text-blue-300 bg-blue-600/10',
+      error: 'text-rose-300 bg-rose-600/10 hover:bg-rose-600/20',
     };
 
     let latestUpdateStatus = null;
 
-    function setUpdateButton(tone, label, title) {
-      const btn = document.getElementById('btn-update');
-      const labelEl = document.getElementById('update-label');
-      if (!btn || !labelEl) return;
-      btn.className = UPDATE_TONE[tone] || UPDATE_TONE.current;
+    function setUpdateButton(tone, label, detail, dotTone) {
+      const btn = document.getElementById('rail-update');
+      const labelEl = document.getElementById('rail-update-label');
+      const dotEl = document.getElementById('rail-update-dot');
+      if (!btn || !labelEl || !dotEl) return;
+
+      // Keep the rail classes; only the tone part changes.
+      btn.className = `${RAIL_UPDATE_BASE} ${RAIL_UPDATE_TONE[tone] || RAIL_UPDATE_TONE.current}`;
       labelEl.innerText = label;
-      if (title) btn.title = title;
+      // The label is hidden when the rail is collapsed, so the dot carries the
+      // state on its own there.
+      dotEl.className = dotTone ? `rail-dot ${dotTone}` : 'rail-dot hidden';
+      btn.dataset.tip = detail || label;
+      btn.title = detail || label;
     }
 
     function renderUpdateStatus(st) {
       latestUpdateStatus = st;
       if (!st || !st.available) {
         setUpdateButton('error', 'No git checkout',
-          'This install is not a git checkout, so it cannot self-update.');
+          'This install is not a git checkout, so it cannot self-update.', 'bg-rose-400');
         return;
       }
 
       const behind = st.behind || 0;
-      const parts = [behind > 0 ? `${behind} behind` : 'Up to date'];
-      if (st.dirty) {
-        parts.push(`${st.changed_files} local change${st.changed_files === 1 ? '' : 's'}`);
-      }
+      const label = behind > 0
+        ? `Update · ${behind} behind`
+        : (st.dirty ? `Update · ${st.changed_files} local change${st.changed_files === 1 ? '' : 's'}` : 'Up to date');
 
       const checked = st.fetched_at ? `, last checked ${formatAgo(st.fetched_at)}` : ', not yet fetched';
-      let title;
+      let detail;
       if (behind > 0) {
-        title = `${behind} commit(s) behind ${st.upstream} (${st.local_sha} → ${st.remote_sha})\nClick to update and reload the gateway in place${checked}`;
+        detail = `${behind} commit(s) behind ${st.upstream} (${st.local_sha} → ${st.remote_sha})\n` +
+                 `Click to update and reload the gateway in place${checked}`;
+      } else if (st.dirty) {
+        detail = `${st.changed_files} uncommitted local change(s), up to date with ${st.upstream} at ${st.local_sha}${checked}\n` +
+                 `Click to check again; a fast-forward pull fails if these conflict`;
       } else {
-        title = `Up to date with ${st.upstream} at ${st.local_sha}${checked}\nClick to check again`;
+        detail = `Up to date with ${st.upstream} at ${st.local_sha}${checked}\nClick to check again`;
       }
-      if (st.dirty) title += `\n${st.changed_files} uncommitted local change(s): a fast-forward pull fails if they conflict`;
-      if (st.fetch_error) title += `\nLast fetch failed: ${st.fetch_error}`;
+      if (st.fetch_error) detail += `\nLast fetch failed: ${st.fetch_error}`;
 
-      setUpdateButton(behind > 0 ? 'available' : 'current', parts.join(' · '), title);
+      const dot = behind > 0 ? 'bg-amber-400' : (st.dirty ? 'bg-zinc-500' : '');
+      setUpdateButton(behind > 0 ? 'available' : 'current', label, detail, dot);
     }
 
     async function loadUpdateStatus(fetchRemote) {
@@ -1599,7 +1614,7 @@ print(res.choices[0].message.content)</pre>
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         renderUpdateStatus(await res.json());
       } catch (e) {
-        setUpdateButton('error', 'Update check failed', String(e.message || e));
+        setUpdateButton('error', 'Update check failed', String(e.message || e), 'bg-rose-400');
       }
     }
 
@@ -1616,7 +1631,8 @@ print(res.choices[0].message.content)</pre>
         } catch (e) { /* still coming back up */ }
       }
       setUpdateButton('error', 'Reload manually',
-        'The gateway did not come back in time; reload the page or restart KiteRouter.');
+        'The gateway did not come back in time; reload the page or restart KiteRouter.',
+        'bg-rose-400');
       return false;
     }
 
@@ -1649,7 +1665,7 @@ print(res.choices[0].message.content)</pre>
         });
         const data = await res.json();
         if (data.status === 'error') {
-          setUpdateButton('error', 'Update failed');
+          setUpdateButton('error', 'Update failed', data.message || 'Update failed.', 'bg-rose-400');
           alert(data.message || 'Update failed.');
           loadUpdateStatus(false);
           return;

@@ -43,8 +43,15 @@ The order they get built in, the reasons, and the one open question (whether to 
 
 ## Header Features
 - **Online Radar**: Real-time periodic latency ping to `127.0.0.1:3001` with status indicator.
-- **Update**: shows how far behind `origin/main` the checkout is (`3 behind`, `Up to date`), amber when commits are waiting, and includes uncommitted local changes in the label. The tooltip carries the SHA pair, how long ago the remote was checked, any fetch error, and a warning that a fast-forward pull fails if local changes conflict. Clicking confirms first, then updates and reloads the gateway in place; the page polls `/health` until the server answers again and only then reloads itself. Nothing to pull means the click is treated as a fresh check.
 - **Backup**: One-click download of clean `kiterouter-backup.json` configuration file.
+
+## Rail footer actions
+
+Below the feature list the rail carries three actions — **Update**, **Health** (`/health`) and **Backup config** — plus the gateway status dot. They follow the rail's collapse behaviour: icon + label when expanded, icon only when collapsed.
+
+**Update** shows how far behind `origin/main` the checkout is — `Update · 3 behind` (amber) or `Up to date` — and mentions uncommitted local changes instead when there are no commits waiting. Hovering gives the SHA pair, the age of the last remote check, any fetch error, and a warning that a fast-forward pull fails if local changes conflict.
+
+When the rail is **collapsed the label is hidden**, so a status dot carries the state: amber for commits waiting, grey for local changes only, hidden when clean. Clicking asks for confirmation (it replaces the running process), then updates and reloads the gateway in place. The page polls `/health` until the server answers again and only then reloads itself, giving up with `Reload manually` rather than spinning forever. When there is nothing to pull the click is treated as a fresh check against the remote.
 
 ## Import section
 
