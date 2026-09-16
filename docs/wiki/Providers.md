@@ -4,7 +4,7 @@
 
 | Provider id | Alias | Auth | Notes |
 |---|---|---|---|
-| `cursor` | — | session token from Cursor IDE (`state.vscdb`) / `cursor-agent` | CLI-impersonation headers; live status see [[Troubleshooting]] |
+| `cursor` | — | session token from Cursor IDE (`state.vscdb`) / `cursor-agent` | Connect-RPC `agent.v1.AgentService/Run` over HTTP/2 with CLI impersonation; live status see [[Troubleshooting]] |
 | `antigravity` | — | local token / gcloud ADC | |
 | `opencode_free` | — | none (public) | Claude 3.5 Sonnet, GPT-4o, DeepSeek |
 | `opencode_go` | — | subscription | |

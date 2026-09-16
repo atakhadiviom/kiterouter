@@ -6,7 +6,8 @@ Check live status first: dashboard → Providers → run a **test model** on the
 |---|---|---|
 | `API key missing. Set X_API_KEY` | No key in config/env for that provider | Add the key in Providers card (or env var) |
 | HTTP 401 after import | Key could be valid-but-rejected, or an OAuth token used as API key | Check auth type vs adapter; re-auth the source app; see [[Credential Import (OmniRoute and 9Router)]] |
-| HTTP 415 / "outdated version" from Cursor | Wrong endpoint or stale client identity | Cursor's `AiService/StreamChat` path is deprecating; the current working path is `agent.v1.AgentService/Run` on the api5 agent URL with CLI-type headers — verify adapter matches |
+| `Out of usage` / limit message from Cursor | Token is valid; account reached free/pro usage quota | Expected from Cursor when monthly quota is exhausted; switch model or increase account limits |
+| "outdated version" from Cursor | Resolved in 0.1.0 via `agent.v1.AgentService/Run` connect-proto over HTTP/2 | Make sure KiteRouter is updated to the latest revision; stale `AiService/StreamChat` is no longer used |
 | HTTP 404 (e.g. Kiro) | Endpoint path/host changed upstream | Verify the endpoint against the vendor's current docs before changing code |
 | Empty content, no error | Upstream accepted the request but model output mapping failed | Enable debug logs for that adapter; check model-id mapping decisions |
 | Sync imported fewer providers than the source has | That's the skip policy — reasons are in the sync response `skipped` field | Fix the reason (rotate key in OmniRoute, re-auth) and re-sync |

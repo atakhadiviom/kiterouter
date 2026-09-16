@@ -1,8 +1,5 @@
 import pytest
-from kiterouter.providers.cursor import (
-    generate_cursor_checksum,
-    build_cursor_anti_ban_headers,
-)
+from kiterouter.providers.cursor import CursorProvider
 from kiterouter.providers.antigravity import (
     sanitize_antigravity_payload,
     build_ide_request_id,
@@ -10,20 +7,17 @@ from kiterouter.providers.antigravity import (
 )
 
 
-def test_cursor_checksum_generation():
-    machine_id = "test-machine-id-12345"
-    checksum = generate_cursor_checksum(machine_id)
-    assert len(checksum) > len(machine_id)
-    assert checksum.endswith(machine_id)
-
-
-def test_cursor_anti_ban_headers():
-    token = "test_user_token"
-    headers = build_cursor_anti_ban_headers(token, machine_id="fixed_machine_123")
-    assert headers["x-cursor-checksum"].endswith("fixed_machine_123")
-    assert headers["x-cursor-client-version"] == "0.46.11"
+def test_cursor_cli_headers():
+    """The Agent-Run path uses CLI impersonation (checksums are not required there)."""
+    p = CursorProvider({"mock": False})
+    headers = p._base_headers()
+    assert headers["x-cursor-client-type"] == "cli"
+    assert headers["x-cursor-client-version"].startswith("cli-")
     assert headers["x-ghost-mode"] == "true"
     assert "user-agent" in headers
+    assert headers["authorization"].startswith("Bearer ")
+    # one-stable-identity rule: no per-request machine rotation in the wire
+    assert headers["authorization"] == p._base_headers()["authorization"]
 
 
 def test_antigravity_payload_sanitization():
