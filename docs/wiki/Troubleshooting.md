@@ -9,7 +9,7 @@ Check live status first: dashboard → Providers → run a **test model** on the
 | `Out of usage` / limit message from Cursor | Token is valid; account reached free/pro usage quota | Expected from Cursor when monthly quota is exhausted; switch model or increase account limits |
 | "outdated version" from Cursor | Resolved in 0.1.0 via `agent.v1.AgentService/Run` connect-proto over HTTP/2 | Make sure KiteRouter is updated to the latest revision; stale `AiService/StreamChat` is no longer used |
 | Antigravity HTTP 401 / 400 | Expired OAuth access token or schema mismatch | Resolved in 0.1.0: auto-refreshes Google OAuth tokens and wraps messages into Gemini `contents`/`request` format |
-| Antigravity HTTP 403 `SUBSCRIPTION_REQUIRED` | Google Cloud Code Private API not enabled or individual tier discontinued | Enable Cloud Code Private API on your GCP project or migrate to supported enterprise/Antigravity plan |
+| Antigravity HTTP 403 `Cloud Code Private API has not been used` | Dummy GCP project (e.g. `reference-airline-kmj57`) or `x-goog-user-project` header sent on consumer tier | Resolved: KiteRouter uses `aicode-consumers` project context, queries `loadCodeAssist`, and avoids injecting consumer project into GCP service-usage billing headers |
 | Cline HTTP 401 | Expired/revoked extension token (`invalid_grant`) | Re-authenticate in the Cline VSCode/Cursor extension and re-import credentials |
 | OpenCode Free HTTP 401 | Missing public Bearer auth or client headers | Resolved: uses `Authorization: Bearer public` and `x-opencode-client: desktop` headers |
 | OpenCode Go empty error | Dead endpoint or reasoning tokens unmapped | Resolved: routes to `https://opencode.ai/zen/go/v1/chat/completions` with required session IDs and aggregates reasoning content |
