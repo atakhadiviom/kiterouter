@@ -100,8 +100,10 @@ async def test_antigravity_refresh_mock():
         "expires_in": 3600,
     }
 
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+         patch("kiterouter.providers.antigravity.persist_provider_tokens") as mock_persist:
         mock_post.return_value = mock_resp
         token = await provider.refresh_access_token()
         assert token == "ya29.test_new_access_token"
         assert provider.auth_token == "ya29.test_new_access_token"
+        assert mock_persist.called
