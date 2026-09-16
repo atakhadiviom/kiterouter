@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
@@ -86,6 +87,19 @@ class OpenCodeFreeProvider(BaseProvider):
             return
 
         headers = build_opencode_headers(kwargs.get("session_id"))
+
+        # muse-spark models on OpenCode require the OpenAI Responses API at /zen/v1/responses
+        if model.startswith("muse-spark"):
+            async for chunk in self._stream_responses_api(
+                model=model,
+                messages=messages,
+                headers=headers,
+                max_tokens=max_tokens,
+                **kwargs,
+            ):
+                yield chunk
+            return
+
         payload = {
             "model": model,
             "messages": messages,
@@ -127,4 +141,114 @@ class OpenCodeFreeProvider(BaseProvider):
                 f"[OpenCode Free connection notice: {e}]", model=model
             )
             yield create_sse_chunk(finish_reason="stop", model=model)
+            yield "data: [DONE]\n\n"
+
+    async def _stream_responses_api(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        headers: Dict[str, str],
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[str, None]:
+        system_msgs = [
+            m.get("content", "") for m in messages if m.get("role") == "system"
+        ]
+        non_system = [m for m in messages if m.get("role") != "system"]
+
+        payload: Dict[str, Any] = {
+            "model": model,
+            "input": [
+                {
+                    "role": m.get("role", "user"),
+                    "content": m.get("content", ""),
+                }
+                for m in non_system
+            ],
+            "stream": True,
+            "max_output_tokens": max(max_tokens or 0, 4096),
+            "reasoning": {"effort": "low"},
+        }
+        if system_msgs:
+            payload["instructions"] = "\n\n".join(str(s) for s in system_msgs)
+
+        responses_url = f"{OPENCODE_BASE}/zen/v1/responses"
+        chunk_id = f"chatcmpl-{int(time.time() * 1000)}"
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream(
+                    "POST", responses_url, headers=headers, json=payload
+                ) as resp:
+                    if resp.status_code != 200:
+                        err_text = ""
+                        try:
+                            err_bytes = await resp.aread()
+                            err_json = json.loads(err_bytes.decode())
+                            err_text = (
+                                err_json.get("error", {}).get("message")
+                                or err_json.get("message")
+                                or ""
+                            )
+                        except Exception:
+                            pass
+                        msg = f"OpenCode Free Error: HTTP {resp.status_code}"
+                        if err_text:
+                            msg += f" - {err_text}"
+                        yield create_sse_chunk(msg, model=model, chunk_id=chunk_id)
+                        yield "data: [DONE]\n\n"
+                        return
+
+                    async for raw_line in resp.aiter_lines():
+                        if not raw_line:
+                            continue
+                        line = raw_line.strip()
+                        if line.startswith("data: "):
+                            data_str = line[6:].strip()
+                            if not data_str or data_str == "[DONE]":
+                                continue
+                            try:
+                                event_obj = json.loads(data_str)
+                                ev_type = event_obj.get("type")
+                                if ev_type == "response.output_text.delta":
+                                    delta = event_obj.get("delta", "")
+                                    if delta:
+                                        yield create_sse_chunk(
+                                            delta, model=model, chunk_id=chunk_id
+                                        )
+                                elif ev_type == "response.completed":
+                                    yield create_sse_chunk(
+                                        finish_reason="stop",
+                                        model=model,
+                                        chunk_id=chunk_id,
+                                    )
+                                    yield "data: [DONE]\n\n"
+                                    return
+                                elif ev_type == "response.incomplete":
+                                    reason = (
+                                        event_obj.get("response", {})
+                                        .get("incomplete_details", {})
+                                        or {}
+                                    ).get("reason")
+                                    yield create_sse_chunk(
+                                        finish_reason=reason or "length",
+                                        model=model,
+                                        chunk_id=chunk_id,
+                                    )
+                                    yield "data: [DONE]\n\n"
+                                    return
+                            except Exception:
+                                pass
+
+                    yield create_sse_chunk(
+                        finish_reason="stop", model=model, chunk_id=chunk_id
+                    )
+                    yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield create_sse_chunk(
+                f"[OpenCode Free connection notice: {e}]",
+                model=model,
+                chunk_id=chunk_id,
+            )
+            yield create_sse_chunk(finish_reason="stop", model=model, chunk_id=chunk_id)
             yield "data: [DONE]\n\n"

@@ -6,8 +6,8 @@
 |---|---|---|---|
 | `cursor` | — | session token from Cursor IDE (`state.vscdb`) / `cursor-agent` | Connect-RPC `agent.v1.AgentService/Run` over HTTP/2 with CLI impersonation; live status see [[Troubleshooting]] |
 | `antigravity` | — | Google OAuth token + refresh token | Auto OAuth refresh against `oauth2.googleapis.com`; translates OpenAI format to Cloud Code Assist `contents`/`request`; honest subscription/quota reporting |
-| `opencode_free` | — | none (public) | Uses `Bearer public` and desktop client headers; supports `nemotron-3-ultra-free`, `mimo-v2.5-free`, `ling-3.0-flash-fin-free`; dynamic catalog via `zen/v1/models` |
-| `opencode_go` | — | `api_key` (`OPENCODE_API_KEY`) | `https://opencode.ai/zen/go/v1/chat/completions`; requires session IDs; dynamic model catalog (37+ models) via `zen/go/v1/models` |
+| `opencode_free` | — | none (public) | Uses `Bearer public` and desktop client headers; supports `nemotron-3-ultra-free`, `mimo-v2.5-free`, `ling-3.0-flash-fin-free`, `muse-spark-1.3-contributor-free`, `muse-spark-1.2-contributor-free` (auto-routed via OpenAI Responses API `/zen/v1/responses`); dynamic catalog via `zen/v1/models` |
+| `opencode_go` | — | `api_key` (`OPENCODE_API_KEY`) | `https://opencode.ai/zen/go/v1/chat/completions` and `/responses`; requires session IDs; dynamic model catalog (37+ models) via `zen/go/v1/models` |
 | `cline` | — | API key / extension token | Dual routing to `https://api.cline.bot` (for extension JWTs) or OpenRouter; token refresh support; honest upstream auth reporting |
 | `claude` | `cc` | `~/.claude.json` OAuth | Anthropic native |
 | `codex` | `cx` | OAuth token / `OPENAI_API_KEY` | ChatGPT/Codex backend |
