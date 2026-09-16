@@ -92,7 +92,7 @@ vm.runInContext(
   'setRailCollapsed, toggleRail, storedRailCollapsed, railIsCollapsed, RAIL_STORAGE_KEY, ' +
   'renderTopology, renderTopologyGraph, topoZoom, topoFit, topoStatusOf, topoEdgePath, ' +
   'initTopologyInteractions, TOPO, renderHealthStats, renderHealthConnections, ' +
-  'renderHealthRecent, formatMs, formatBytes };',
+  'renderHealthRecent, formatMs, formatBytes, nodeSettingsHtml, NODE_API_TYPES };',
   ctx
 );
 const t = ctx.__t;
@@ -376,6 +376,54 @@ check(!/NaN/.test(recentHtml), 'no NaN in the recent list');
 
 t.renderHealthRecent([]);
 check(/Nothing probed yet/.test(healthRecent._innerHTML), 'empty recent list should explain itself');
+
+// ── declarative provider nodes ────────────────────────────────────────────
+check(t.NODE_API_TYPES.length === 4, 'four wire formats should be offered');
+
+// a code adapter must not get a node block
+check(t.nodeSettingsHtml({ id: 'cursor' }, { token: 'x' }) === '',
+  'a non-node provider should render no node settings');
+check(t.nodeSettingsHtml({ id: 'al' }, {}) === '', 'a provider with no kind renders no node settings');
+
+const nodeMarkup = t.nodeSettingsHtml({ id: 'deepseek' }, {
+  kind: 'node',
+  prefix: 'ds',
+  api_type: 'openai-compatible',
+  base_url: 'https://api.deepseek.com/v1',
+  chat_path: '/chat/completions',
+  models_path: '/models',
+  auth: 'bearer',
+  custom_headers: { 'X-Trace': '1' },
+  verified_at: Math.floor(Date.now() / 1000) - 120,
+  api_key: 'sk-secret-value',
+});
+
+// Attributes are HTML-escaped, so decode what the browser would see before asserting.
+const decodeAttr = (s) => s
+  .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+const decodedNode = decodeAttr(nodeMarkup);
+
+check(/data-provider="deepseek"/.test(nodeMarkup), 'fields must be attributable to their provider');
+check(/data-node-field="prefix"/.test(nodeMarkup) && /data-node-field="api_type"/.test(nodeMarkup),
+  'prefix and wire format must be editable');
+check(/data-node-field="base_url"/.test(nodeMarkup), 'base_url must be editable');
+check(/value="https:\/\/api\.deepseek\.com\/v1"/.test(nodeMarkup),
+  'non-secret values should be shown, not blanked');
+check(/selected/.test(nodeMarkup), 'the current wire format should be preselected');
+check(/"X-Trace":"1"/.test(decodedNode), 'custom headers should round-trip as JSON');
+check(/verified/.test(nodeMarkup), 'a verified node should say so');
+check(!/sk-secret-value/.test(decodedNode), 'the credential must never be rendered');
+// escaping must actually happen, or a header containing a quote would break the attribute
+check(/&quot;/.test(nodeMarkup), 'attribute values must be HTML-escaped');
+
+const unverifiedMarkup = t.nodeSettingsHtml({ id: 'newbie' }, { kind: 'node', base_url: 'https://x/v1' });
+check(/unverified/.test(unverifiedMarkup), 'a fresh node must read as unverified');
+check(/Test node/.test(unverifiedMarkup), 'an unverified node should offer a test');
+
+// the add-node form exists and posts the declarative fields
+check(/id="newnode-base-url"/.test(html) && /id="newnode-api-type"/.test(html), 'add-node form missing');
+check(/addProviderNode\(true\)/.test(html), 'the form should be able to add-and-test');
 
 // ── planned panels ────────────────────────────────────────────────────────
 const planned = t.FEATURES.filter(f => f.status === 'planned');

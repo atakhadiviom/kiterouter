@@ -150,6 +150,22 @@ Restores providers, combos, and gateway settings from a JSON payload.
 
 `provider_health` is passive: every logged request records `{status, model, latency_ms, at, error?}` for its provider. The dashboard prefers it over a recorded test whenever it is fresher, so the topology reflects reality between test runs. It is kept in memory with a throttled write to `~/.kiterouter/live_health.json` — deliberately not the main config, which is large and rewritten wholesale.
 
+## Provider nodes
+
+### `GET /api/providers/nodes`
+
+Every declarative node with its derived URLs and verification state: `id`, `enabled`, `api_type`, `base_url`, `chat_url`, `models_url`, `auth`, `has_credential`, `custom_headers`, `verified_at`, `last_error`. Never includes the credential itself.
+
+### `POST /api/providers/node/validate`
+
+```json
+{ "provider": "deepseek", "model": "deepseek-chat" }
+```
+
+Fetches the node's model catalog and runs a **real streaming completion** against it (reusing the prober's `probe_stream`), returning `available`, `model_count`, `models`, and `completion` (`ok`, `model`, `latency_ms`, `ttft_ms`, `error`).
+
+Records the outcome on the node: only a genuine pass sets `verified_at`; a failure records `last_error` and leaves `verified_at` null. An error body counts as a failure — a 200 carrying `HTTP 401` is not a working provider. Returns `400` for a provider that is not a node.
+
 ## Health history and storage
 
 ### `GET /api/health/connections?days=7`

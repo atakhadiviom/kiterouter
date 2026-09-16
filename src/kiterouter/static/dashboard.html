@@ -366,6 +366,49 @@
       <!-- Test All Models Status Banner -->
       <div id="test-all-banner" class="hidden text-xs p-3 rounded-lg border"></div>
 
+      <!-- Add a provider node: provider definitions are data, not code -->
+      <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+        <div class="flex items-center gap-2.5">
+          <div class="w-7 h-7 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+            <i data-lucide="plug" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="font-semibold text-xs text-zinc-100 uppercase tracking-wide">Add a provider node</h3>
+            <p class="text-xs text-muted">Describe a provider instead of shipping code for it. Saving takes effect on the next request — no restart, no release.</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          <input id="newnode-id" placeholder="id (e.g. deepseek)" class="bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500">
+          <input id="newnode-name" placeholder="Display name" class="bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500">
+          <input id="newnode-prefix" placeholder="prefix (e.g. ds)" class="bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500">
+          <select id="newnode-api-type" class="bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500">
+            <option value="openai-compatible">openai-compatible</option>
+            <option value="openai-responses">openai-responses</option>
+            <option value="anthropic">anthropic</option>
+            <option value="gemini">gemini</option>
+          </select>
+          <input id="newnode-base-url" placeholder="https://api.deepseek.com/v1" class="bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500">
+          <input id="newnode-chat-path" placeholder="/chat/completions" class="bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500">
+          <input id="newnode-models-path" placeholder="/models" class="bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500">
+          <select id="newnode-auth" class="bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500">
+            <option value="bearer">bearer</option>
+            <option value="x-api-key">x-api-key</option>
+            <option value="none">none</option>
+          </select>
+          <input id="newnode-api-key" type="password" placeholder="API key (stored locally, masked)" class="bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500">
+        </div>
+        <textarea id="newnode-headers" rows="2" placeholder='{"X-Foo":"bar"}' class="w-full bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500"></textarea>
+        <div class="flex flex-wrap items-center gap-2">
+          <button onclick="addProviderNode(true)" class="px-3 py-1.5 bg-blue-600/20 border border-blue-500/30 hover:bg-blue-600/30 text-blue-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+            <i data-lucide="zap" class="w-3.5 h-3.5"></i> Add and test
+          </button>
+          <button onclick="addProviderNode(false)" class="px-3 py-1.5 bg-zinc-900 border border-border hover:bg-zinc-800 text-zinc-300 font-medium rounded-lg text-xs transition">
+            Add without testing
+          </button>
+        </div>
+        <div id="newnode-result" class="text-[11px] font-mono text-muted"></div>
+      </div>
+
       <!-- Background Health Probing -->
       <div class="bg-card border border-border rounded-xl p-5 space-y-4">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -2561,6 +2604,8 @@ print(res.choices[0].message.content)</pre>
           </div>
 
           ${fieldsHtml ? `<div class="space-y-2.5 pt-2 border-t border-border/50">${fieldsHtml}</div>` : '<div class="text-xs text-emerald-400/80 pt-1">Zero configuration required (Keyless public access)</div>'}
+
+          ${nodeSettingsHtml(p, saved)}
         `;
         container.appendChild(card);
 
@@ -2737,6 +2782,173 @@ print(res.choices[0].message.content)</pre>
       }
     }
 
+    // ── Declarative provider nodes ─────────────────────────────────────────
+    // A node is described by config, so these fields are editable and saving
+    // them takes effect on the next request. Unlike credentials they are not
+    // secret, so their real values are shown rather than blanked.
+
+    const NODE_API_TYPES = ['openai-compatible', 'openai-responses', 'anthropic', 'gemini'];
+    const NODE_AUTH_TYPES = ['bearer', 'x-api-key', 'none'];
+    const NODE_INPUT_CLASS =
+      'w-full bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500';
+
+    function nodeField(p, key, label, value, placeholder) {
+      return `<div>
+        <label class="text-[10px] font-medium text-muted block mb-0.5 uppercase tracking-wide">${label}</label>
+        <input type="text" data-node-field="${key}" data-provider="${p.id}"
+               value="${escapeHtml(value == null ? '' : String(value))}"
+               placeholder="${placeholder || ''}"
+               onfocus="isUserTyping = true" onblur="isUserTyping = false"
+               class="${NODE_INPUT_CLASS}">
+      </div>`;
+    }
+
+    function nodeSelect(p, key, label, options, current) {
+      const opts = options.map(o =>
+        `<option value="${o}"${o === (current || '') ? ' selected' : ''}>${o}</option>`).join('');
+      return `<div>
+        <label class="text-[10px] font-medium text-muted block mb-0.5 uppercase tracking-wide">${label}</label>
+        <select data-node-field="${key}" data-provider="${p.id}"
+                onfocus="isUserTyping = true" onblur="isUserTyping = false"
+                class="${NODE_INPUT_CLASS}">${opts}</select>
+      </div>`;
+    }
+
+    function nodeSettingsHtml(p, saved) {
+      if (String((saved || {}).kind || '').toLowerCase() !== 'node') return '';
+      const headers = saved.custom_headers && Object.keys(saved.custom_headers).length
+        ? JSON.stringify(saved.custom_headers)
+        : '';
+      const verified = saved.verified_at
+        ? `<span class="text-emerald-400">verified ${formatAgo(saved.verified_at)}</span>`
+        : '<span class="text-amber-400">unverified — test it</span>';
+
+      return `
+        <div class="bg-zinc-900/60 border border-blue-500/20 rounded-lg p-3 space-y-2.5">
+          <div class="flex items-center justify-between">
+            <span class="text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+              Provider node · described by config, not code
+            </span>
+            <span class="text-[10px] font-mono">${verified}</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2.5">
+            ${nodeField(p, 'prefix', 'Prefix', saved.prefix, 'ds')}
+            ${nodeSelect(p, 'api_type', 'Wire format', NODE_API_TYPES, saved.api_type || 'openai-compatible')}
+            ${nodeField(p, 'base_url', 'Base URL', saved.base_url, 'https://api.deepseek.com/v1')}
+            ${nodeField(p, 'chat_path', 'Chat path', saved.chat_path, '/chat/completions')}
+            ${nodeField(p, 'models_path', 'Models path', saved.models_path, '/models')}
+            ${nodeSelect(p, 'auth', 'Auth style', NODE_AUTH_TYPES, saved.auth || 'bearer')}
+          </div>
+          ${nodeField(p, 'custom_headers_text', 'Custom headers (JSON)', headers, '{"X-Foo":"bar"}')}
+          <div class="flex items-center gap-2">
+            <button onclick="validateNode('${p.id}')" id="btn-validate-${p.id}"
+                    class="px-2.5 py-1 bg-blue-600/20 border border-blue-500/30 hover:bg-blue-600/30 text-blue-300 rounded text-xs transition flex items-center gap-1">
+              <i data-lucide="zap" class="w-3 h-3"></i> Test node
+            </button>
+            <span class="text-[10px] text-muted">Saving takes effect immediately — no restart</span>
+          </div>
+          <div id="node-result-${p.id}" class="text-[11px] font-mono text-muted"></div>
+        </div>`;
+    }
+
+    async function validateNode(providerId) {
+      const out = document.getElementById(`node-result-${providerId}`);
+      const btn = document.getElementById(`btn-validate-${providerId}`);
+      if (btn) btn.disabled = true;
+      if (out) out.innerHTML = '<span class="text-blue-300">Testing with a real completion…</span>';
+      try {
+        const res = await fetch('/api/providers/node/validate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: providerId }),
+        });
+        const data = await res.json();
+        if (!out) return;
+
+        if (!res.ok || data.status === 'error') {
+          out.innerHTML = `<span class="text-rose-400">${escapeHtml(data.message || 'validation failed')}</span>`;
+          return;
+        }
+
+        const c = data.completion || {};
+        const tone = data.verified ? 'text-emerald-400' : 'text-rose-400';
+        out.innerHTML = `
+          <div class="${tone}">${escapeHtml(data.message || '')}</div>
+          <div class="text-muted mt-1">
+            ${data.available ? 'credential present' : 'no credential'} ·
+            catalog ${data.model_count || 0} model(s)${c.model ? ` · probed ${escapeHtml(c.model)}` : ''}
+            ${c.latency_ms ? ` · ${formatMs(c.latency_ms)}` : ''}${c.ttft_ms ? ` · ttft ${formatMs(c.ttft_ms)}` : ''}
+          </div>
+          ${c.error ? `<div class="text-rose-300/90 mt-1">${escapeHtml(c.error)}</div>` : ''}
+          ${data.catalog_error ? `<div class="text-amber-300/90 mt-1">catalog: ${escapeHtml(data.catalog_error)}</div>` : ''}`;
+        loadData();
+      } catch (e) {
+        if (out) out.innerHTML = `<span class="text-rose-400">${escapeHtml(String(e.message || e))}</span>`;
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function addProviderNode(thenTest) {
+      const out = document.getElementById('newnode-result');
+      const id = (document.getElementById('newnode-id')?.value || '').trim();
+      const baseUrl = (document.getElementById('newnode-base-url')?.value || '').trim();
+      if (!/^[a-z0-9_-]+$/i.test(id)) {
+        if (out) out.innerHTML = '<span class="text-rose-400">id must be letters, digits, _ or -</span>';
+        return;
+      }
+      if (!baseUrl) {
+        if (out) out.innerHTML = '<span class="text-rose-400">base URL is required</span>';
+        return;
+      }
+
+      let headers = {};
+      const rawHeaders = (document.getElementById('newnode-headers')?.value || '').trim();
+      if (rawHeaders) {
+        try {
+          headers = JSON.parse(rawHeaders);
+        } catch (e) {
+          if (out) out.innerHTML = '<span class="text-rose-400">custom headers must be valid JSON</span>';
+          return;
+        }
+      }
+
+      const apiKey = (document.getElementById('newnode-api-key')?.value || '').trim();
+      const node = {
+        kind: 'node',
+        enabled: true,
+        name: (document.getElementById('newnode-name')?.value || '').trim() || id,
+        prefix: (document.getElementById('newnode-prefix')?.value || '').trim(),
+        api_type: document.getElementById('newnode-api-type')?.value || 'openai-compatible',
+        base_url: baseUrl,
+        chat_path: (document.getElementById('newnode-chat-path')?.value || '').trim(),
+        models_path: (document.getElementById('newnode-models-path')?.value || '').trim(),
+        auth: document.getElementById('newnode-auth')?.value || 'bearer',
+        custom_headers: headers,
+      };
+      if (apiKey) node.api_key = apiKey;
+
+      try {
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ providers: { [id]: node } }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        if (out) out.innerHTML = `<span class="text-emerald-400">Added ${escapeHtml(id)}. Live now — no restart.</span>`;
+        ['newnode-id', 'newnode-name', 'newnode-prefix', 'newnode-base-url',
+         'newnode-chat-path', 'newnode-models-path', 'newnode-api-key', 'newnode-headers']
+          .forEach(elId => { const el = document.getElementById(elId); if (el) el.value = ''; });
+
+        isUserTyping = false;
+        await loadData();
+        if (thenTest) await validateNode(id);
+      } catch (e) {
+        if (out) out.innerHTML = `<span class="text-rose-400">${escapeHtml(String(e.message || e))}</span>`;
+      }
+    }
+
     async function saveAllProviders() {
       const updates = {};
       document.querySelectorAll('input[id^="input-"]').forEach(el => {
@@ -2752,6 +2964,41 @@ print(res.choices[0].message.content)</pre>
           }
         }
       });
+
+      // Node settings are non-secret, so they are shown and saved as-is. Collected
+      // via data attributes rather than parsed out of the id, because provider ids
+      // can contain dashes.
+      const badHeaders = [];
+      document.querySelectorAll('[data-node-field]').forEach(el => {
+        const provId = el.dataset.provider;
+        const field = el.dataset.nodeField;
+        if (!updates[provId]) updates[provId] = { enabled: true };
+        const value = el.value.trim();
+
+        if (field === 'custom_headers_text') {
+          if (value === '') {
+            updates[provId].custom_headers = {};
+            return;
+          }
+          try {
+            const parsed = JSON.parse(value);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              updates[provId].custom_headers = parsed;
+            } else {
+              badHeaders.push(provId);
+            }
+          } catch (e) {
+            badHeaders.push(provId);
+          }
+          return;
+        }
+        updates[provId][field] = value;
+      });
+
+      if (badHeaders.length) {
+        alert('Custom headers must be a JSON object. Check: ' + [...new Set(badHeaders)].join(', '));
+        return;
+      }
 
       try {
         const res = await fetch('/api/config', {

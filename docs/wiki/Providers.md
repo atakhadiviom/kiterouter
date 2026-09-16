@@ -19,6 +19,41 @@
 | `custom` | — | any | OpenAI-compatible base URL |
 | `command_code` | `cmd` | API key | `commandcode.ai` Claude/GPT models |
 
+## Provider nodes (providers as data)
+
+Most providers change constantly — a new model id, a renamed path, a different host. KiteRouter therefore lets a provider be **described**, not compiled. An entry with `kind: "node"` is driven entirely by config:
+
+```json
+"deepseek": {
+  "kind": "node",
+  "enabled": true,
+  "prefix": "ds",
+  "api_type": "openai-compatible",
+  "base_url": "https://api.deepseek.com/v1",
+  "chat_path": "/chat/completions",
+  "models_path": "/models",
+  "auth": "bearer",
+  "custom_headers": {},
+  "api_key": "…"
+}
+```
+
+- **`api_type`** — `openai-compatible` (default), `openai-responses`, `anthropic`, `gemini`. Each selects the request/response translation, so an Anthropic- or Gemini-shaped endpoint works without a bespoke adapter.
+- **`auth`** — `bearer`, `x-api-key`, or `none`. `custom_headers` are merged in and win over the defaults.
+- **`prefix`** — lets you route with a short id (`ds/…`) in addition to the provider id itself. A prefix that would shadow an existing alias is **refused**, because that would silently reroute another provider.
+- **`chat_path` / `models_path`** — joined to `base_url`; either may be a full URL. A Gemini path may contain `{model}`, which is substituted per request.
+- **Seeding** — well-known ids (groq, openrouter, deepseek, opencode) get a sensible `base_url` and starter model list, but every field stays overridable. That is the point: the imported providers currently failing with HTTP 404/400 fail on baked-in assumptions, and each is now a form edit.
+
+**Saving takes effect on the next request — no restart.** Saving config already rebuilds the router, so a node added or corrected is immediately routable.
+
+### Verification, not assumption
+
+A node is **unverified** until it answers a real completion; a plausible-looking `base_url` proves nothing. `POST /api/providers/node/validate` fetches the catalog and runs a real streaming completion, then records `verified_at` (only on success) or `last_error` (on failure). The dashboard shows `verified 3m ago` or `unverified — test it`.
+
+### What stays as code
+
+Providers needing real protocol work keep hand-written adapters — Cursor's Connect-RPC `agent.v1.AgentService/Run`, Antigravity's Cloud Code Assist, Codex, Copilot. Those are not expressible as paths and headers, and OmniRoute keeps code adapters alongside its nodes for the same reason.
+
 ## Routing
 
 Prefix the model with the provider id:

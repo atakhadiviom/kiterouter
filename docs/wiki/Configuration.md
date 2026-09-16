@@ -38,6 +38,23 @@ Cline adds two keys of its own:
 - `expires_at` — access-token expiry (epoch seconds); tokens are refreshed ahead of it
 - `openrouter_model` — optional; forces the OpenRouter model used when Cline auth is refused, instead of resolving one from OpenRouter's live catalog
 
+### Declarative provider nodes
+
+An entry with `kind: "node"` is driven entirely by config rather than by a built-in adapter, so a changed endpoint or model id needs no code change. See [[Providers]] for the full description.
+
+| Key | Meaning |
+|---|---|
+| `kind` | `node` marks a declarative provider |
+| `prefix` | Short routing alias (`ds/…`). Refused if it would shadow an existing alias |
+| `api_type` | `openai-compatible` (default) · `openai-responses` · `anthropic` · `gemini` |
+| `base_url` | Upstream root; `chat_path` and `models_path` join to it |
+| `chat_path` | Defaults per `api_type`; may contain `{model}`; may be a full URL |
+| `models_path` | Catalog endpoint, used by model fetches and node validation |
+| `auth` | `bearer` · `x-api-key` · `none` |
+| `custom_headers` | Object merged into request headers; wins over defaults |
+| `verified_at` | Set **only** by a passing real completion, via node validation |
+| `last_error` | Why the last validation failed, when it did |
+
 Example (values are yours, never commit real keys):
 
 ```json

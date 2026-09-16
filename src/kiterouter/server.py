@@ -19,7 +19,8 @@ from kiterouter import cline_auth, updater
 from kiterouter.compressor import compress_messages
 from kiterouter.config import KiteConfig
 from kiterouter.live_health import LiveHealth
-from kiterouter.prober import HealthProber
+from kiterouter.prober import HealthProber, probe_stream
+from kiterouter.providers.node import NodeProvider
 from kiterouter.router import ProviderRouter
 from kiterouter.store import Store
 from kiterouter.token_fetcher import TokenFetcher, normalize_expires_at
@@ -644,6 +645,93 @@ async def health_connections(days: int = 7):
             (row["ok_count"] or 0) * 100.0 / row["checks"], 1
         ) if row["checks"] else 0.0
     return {"status": "success", "days": days, "connections": connections}
+
+
+class ValidateNodeRequest(BaseModel):
+    provider: str
+    model: Optional[str] = None
+
+
+@app.post("/api/providers/node/validate")
+async def validate_provider_node(req: ValidateNodeRequest):
+    """Test a declarative provider node before trusting it.
+
+    A node is *unverified* until it answers a real completion: a correct-looking
+    base_url and path prove nothing. The result is recorded on the node so the
+    dashboard can show verified/unverified rather than guessing from the form.
+    """
+    global router
+
+    conf = config.providers.get(req.provider)
+    if not isinstance(conf, dict) or str(conf.get("kind") or "").lower() != "node":
+        return JSONResponse(
+            {"status": "error", "message": f"{req.provider} is not a provider node"},
+            status_code=400,
+        )
+
+    node = NodeProvider(req.provider, conf)
+    result: Dict[str, Any] = {"status": "success", "provider": req.provider, "describe": node.describe()}
+
+    try:
+        result["available"] = await node.is_available()
+    except Exception as e:
+        result["available"] = False
+        result["available_error"] = str(e)
+
+    models: List[str] = []
+    try:
+        models = await node.fetch_models()
+    except Exception as e:
+        result["catalog_error"] = str(e)
+    result["model_count"] = len(models)
+    result["models"] = models[:50]
+
+    probe_model = req.model or (models[0] if models else None)
+    if not probe_model:
+        result["verified"] = False
+        result["message"] = "No model to probe; check the models path or set a model."
+        return result
+
+    measurement = await probe_stream(node, probe_model, config.prober_timeout_seconds)
+    text = measurement["text"]
+    ok = measurement["error"] is None and not is_error_content(text)
+    detail = measurement["error"] or (None if ok else (text or "empty response")[:200])
+
+    result["completion"] = {
+        "ok": ok,
+        "model": probe_model,
+        "latency_ms": measurement["latency_ms"],
+        "ttft_ms": measurement["ttft_ms"],
+        "error": detail,
+    }
+    result["verified"] = ok
+    result["message"] = (
+        f"Verified with a real completion ({measurement['latency_ms']}ms)"
+        if ok
+        else f"Not verified: {detail}"
+    )
+
+    # Record it on the node. Only a real completion sets verified_at.
+    config.update_provider_tokens(
+        req.provider,
+        {
+            "verified_at": int(time.time()) if ok else None,
+            "last_error": None if ok else detail,
+            "last_validated_model": probe_model,
+        },
+    )
+    router = ProviderRouter(config=config)
+    return result
+
+
+@app.get("/api/providers/nodes")
+async def list_provider_nodes():
+    """Every declarative node, with its derived URLs and verification state."""
+    nodes = []
+    for name, conf in (config.providers or {}).items():
+        if isinstance(conf, dict) and str(conf.get("kind") or "").lower() == "node":
+            nodes.append(NodeProvider(name, conf).describe())
+    return {"status": "success", "nodes": nodes}
 
 
 @app.get("/api/cline/auth/status")
