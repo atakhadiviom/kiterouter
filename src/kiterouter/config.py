@@ -21,6 +21,13 @@ class KiteConfig:
     prober_interval_seconds: int = 900
     prober_delay_seconds: float = 3.0
     prober: Dict[str, Any] = field(default_factory=dict)
+    # Retention is declared once, here, rather than per call site. A gateway that
+    # only ever grows is a slow-motion outage.
+    retention_health_checks_days: int = 30
+    retention_requests_days: int = 30
+    retention_bodies_days: int = 3
+    retention_usage_days: int = 365
+    store_maintenance_seconds: int = 900
     providers: Dict[str, Any] = field(default_factory=lambda: {
         "cursor": {"enabled": True, "token": "", "machine_id": ""},
         "antigravity": {"enabled": True, "token": "", "project_id": ""},
@@ -79,6 +86,11 @@ class KiteConfig:
                 prober_interval_seconds=data.get("prober_interval_seconds", 900),
                 prober_delay_seconds=data.get("prober_delay_seconds", 3.0),
                 prober=data.get("prober", {}) if isinstance(data.get("prober", {}), dict) else {},
+                retention_health_checks_days=data.get("retention_health_checks_days", 30),
+                retention_requests_days=data.get("retention_requests_days", 30),
+                retention_bodies_days=data.get("retention_bodies_days", 3),
+                retention_usage_days=data.get("retention_usage_days", 365),
+                store_maintenance_seconds=data.get("store_maintenance_seconds", 900),
                 providers=merged_providers,
                 combos=saved_combos if isinstance(saved_combos, dict) else {},
             )
@@ -119,6 +131,10 @@ class KiteConfig:
             self.prober = {}
         self.prober.update(updates)
         self.save()
+
+    def retention_days(self) -> Dict[str, int]:
+        """Retention per stored table — only tables that actually exist."""
+        return {"health_checks": int(self.retention_health_checks_days)}
 
 
 def persist_provider_tokens(provider: str, updates: Dict[str, Any]) -> None:

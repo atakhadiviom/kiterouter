@@ -21,9 +21,26 @@ from kiterouter.config import KiteConfig
 from kiterouter.live_health import LiveHealth
 from kiterouter.prober import HealthProber
 from kiterouter.router import ProviderRouter
+from kiterouter.store import Store
 from kiterouter.token_fetcher import TokenFetcher, normalize_expires_at
 
 logger = logging.getLogger("kiterouter.server")
+
+
+async def _store_maintenance_loop() -> None:
+    """Prune, checkpoint and (weekly) vacuum on a schedule.
+
+    Runs independently of the prober: history must stay bounded whether or not
+    anyone enabled background probing. Sleeps first so startup is not delayed.
+    """
+    while True:
+        await asyncio.sleep(max(60, int(config.store_maintenance_seconds)))
+        try:
+            result = await asyncio.to_thread(store.maintain, config.retention_days(), 7)
+            if result.get("pruned") or result.get("vacuumed"):
+                logger.info("Store maintenance: %s", result)
+        except Exception as e:
+            logger.debug("Store maintenance failed: %s", e)
 
 
 @asynccontextmanager
@@ -32,11 +49,18 @@ async def lifespan(_app: FastAPI):
         prober.interval_seconds = config.prober_interval_seconds
         prober.delay_seconds = config.prober_delay_seconds
         prober.start()
+    maintenance = asyncio.create_task(_store_maintenance_loop())
     try:
         yield
     finally:
+        maintenance.cancel()
+        try:
+            await maintenance
+        except (asyncio.CancelledError, Exception):
+            pass
         await prober.stop()
         live_health.flush(force=True)
+        await asyncio.to_thread(store.close)
 
 
 app = FastAPI(title="KiteRouter", version="0.1.0", lifespan=lifespan)
@@ -47,8 +71,10 @@ STATIC_DIR = Path(__file__).parent / "static"
 CONFIG_DIR = Path.home() / ".kiterouter"
 REQUEST_LOG_FILE = CONFIG_DIR / "request_log.json"
 LIVE_HEALTH_FILE = CONFIG_DIR / "live_health.json"
+STORE_FILE = CONFIG_DIR / "kiterouter.db"
 _recent_requests: List[Dict[str, Any]] = []
 live_health = LiveHealth(LIVE_HEALTH_FILE)
+store = Store(STORE_FILE)
 
 
 def _load_request_logs() -> None:
@@ -573,6 +599,49 @@ async def run_update(req: UpdateRequest):
         _update_status_cache["at"] = 0.0
         _update_status_cache["data"] = None
     return result
+
+
+@app.get("/api/store")
+async def store_stats():
+    """Database size, WAL size and maintenance state.
+
+    The WAL is reported because an unmanaged one is exactly how the neighbouring
+    OmniRoute installation reached 185 MB.
+    """
+    stats = await asyncio.to_thread(store.stats)
+    return {
+        **stats,
+        "path": str(store.path),
+        "retention_days": config.retention_days(),
+        "maintenance_seconds": config.store_maintenance_seconds,
+    }
+
+
+@app.post("/api/store/maintain")
+async def store_maintain():
+    """Run prune + checkpoint (and vacuum when due) now."""
+    result = await asyncio.to_thread(store.maintain, config.retention_days(), 7)
+    return {"status": "completed", **result, **(await asyncio.to_thread(store.stats))}
+
+
+@app.get("/api/health/history")
+async def health_history(limit: int = 100):
+    """Recent probes, newest first."""
+    return {"status": "success", "checks": await asyncio.to_thread(store.health_history, limit)}
+
+
+@app.get("/api/health/connections")
+async def health_connections(days: int = 7):
+    """Per-connection success rate and latency spread over the last N days."""
+    since = int(time.time()) - max(1, days) * 86400
+    connections = await asyncio.to_thread(store.connection_stats, since)
+    latest = {f"{r['provider']}|{r['connection']}": r for r in await asyncio.to_thread(store.latest_health)}
+    for row in connections:
+        row["latest"] = latest.get(f"{row['provider']}|{row['connection']}")
+        row["ok_rate_pct"] = round(
+            (row["ok_count"] or 0) * 100.0 / row["checks"], 1
+        ) if row["checks"] else 0.0
+    return {"status": "success", "days": days, "connections": connections}
 
 
 @app.get("/api/cline/auth/status")
