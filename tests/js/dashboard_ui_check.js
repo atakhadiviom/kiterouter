@@ -214,6 +214,77 @@ const expectedFit = Math.min(1000 / t.TOPO.width, 460 / t.TOPO.height) * 0.96;
 check(Math.abs(t.TOPO.scale - expectedFit) < 0.001, `topoFit computed ${t.TOPO.scale}, expected ${expectedFit}`);
 check(/scale\(/.test(topoCanvas.style.transform), 'canvas transform was not applied');
 
+// ── live traffic vs recorded tests ────────────────────────────────────────
+// A real request is stronger evidence than a test, and fresher when it happened
+// after the newest recorded test.
+const nowSec = Math.floor(Date.now() / 1000);
+const liveProviders = {
+  // tested ok long ago, failed live just now -> must read as error
+  cursor: {
+    test_results: { 'composer-2.5': { status: 'ok', tested_at: nowSec - 3600 } },
+    last_test_status: 'ok',
+  },
+  // tested failed long ago, succeeded live just now -> must read as active
+  glm: {
+    test_results: { 'glm-5.1': { status: 'error', error: 'GLM upstream HTTP 401', tested_at: nowSec - 3600 } },
+    last_test_status: 'error',
+  },
+  // untested, but serving live traffic
+  kiro: { test_results: {} },
+  // tested more recently than its live traffic -> the test should win
+  copilot: {
+    test_results: { 'gh/gpt-4o': { status: 'error', error: 'Copilot upstream HTTP 400', tested_at: nowSec - 10 } },
+    last_test_status: 'error',
+  },
+};
+const liveHealth = {
+  cursor:  { status: 'error', model: 'auto', latency_ms: 90, error: 'cursor HTTP 401', at: nowSec },
+  glm:     { status: 'ok', model: 'glm-5.1', latency_ms: 640, at: nowSec },
+  kiro:    { status: 'ok', model: 'kr/sonnet', latency_ms: 1200, at: nowSec },
+  copilot: { status: 'ok', model: 'gh/gpt-4o', latency_ms: 300, at: nowSec - 120 },
+};
+
+t.renderTopology(liveProviders, [], liveHealth);
+const liveNodes = topoNodes._innerHTML;
+const liveSummary = topoSummary.innerText || '';
+
+// Split into per-node blocks — a fixed-size character window is unreliable
+// because each node's markup (and its tooltip) varies in length.
+const nodeBlocks = liveNodes.split('<div class="topo-node').slice(1);
+const blockFor = (label) => nodeBlocks.find(b => b.includes(label)) || '';
+
+check(nodeBlocks.length === 23, `expected 23 node blocks, got ${nodeBlocks.length}`);
+check(/live traffic/.test(liveSummary), `summary should report live freshness, got "${liveSummary}"`);
+check(!/now ago/.test(liveNodes), 'tooltips should not say "now ago"');
+check(/just now/.test(liveNodes), 'recent live traffic should read "just now"');
+
+// fresh live failure replaces an older ok test -> red
+const cursorBlock = blockFor('Cursor IDE');
+check(cursorBlock !== '', 'cursor node not found');
+check(/bg-rose-400/.test(cursorBlock), 'a provider failing live traffic should be red');
+check(/live failed/.test(cursorBlock), 'the live failure should be described');
+check(/cursor HTTP 401/.test(cursorBlock), 'the live error text should reach the tooltip');
+
+// fresh live success replaces an older failed test -> green
+const glmBlock = blockFor('Zhipu GLM');
+check(glmBlock !== '', 'glm node not found');
+check(/bg-emerald-400/.test(glmBlock), 'a provider succeeding live should be green');
+check(/live OK 640ms/.test(glmBlock), 'the live success should be described with its latency');
+
+// a more recent test still wins over older live traffic
+const copilotBlock = blockFor('GitHub Copilot');
+check(copilotBlock !== '', 'copilot node not found');
+check(/bg-rose-400/.test(copilotBlock), 'the fresher test failure should keep the node red');
+check(/Copilot upstream HTTP 400/.test(copilotBlock), 'the test error text should be shown');
+check(/last live traffic/.test(copilotBlock), 'older live traffic should be mentioned as history');
+
+// untested provider with live traffic is active, not "untested"
+check(/bg-emerald-400/.test(blockFor('Kiro AI')), 'a provider serving live traffic should be green');
+
+// with no live data at all, behaviour falls back to test results
+t.renderTopology(liveProviders, [], {});
+check(/no live traffic yet/.test(topoSummary.innerText || ''), 'summary should say when there is no live traffic');
+
 // ── planned panels ────────────────────────────────────────────────────────
 const planned = t.FEATURES.filter(f => f.status === 'planned');
 for (const f of planned) {

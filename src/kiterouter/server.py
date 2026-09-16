@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from kiterouter import cline_auth
 from kiterouter.compressor import compress_messages
 from kiterouter.config import KiteConfig
+from kiterouter.live_health import LiveHealth
 from kiterouter.prober import HealthProber
 from kiterouter.router import ProviderRouter
 from kiterouter.token_fetcher import TokenFetcher, normalize_expires_at
@@ -34,6 +35,7 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         await prober.stop()
+        live_health.flush(force=True)
 
 
 app = FastAPI(title="KiteRouter", version="0.1.0", lifespan=lifespan)
@@ -43,7 +45,9 @@ router = ProviderRouter(config=config)
 STATIC_DIR = Path(__file__).parent / "static"
 CONFIG_DIR = Path.home() / ".kiterouter"
 REQUEST_LOG_FILE = CONFIG_DIR / "request_log.json"
+LIVE_HEALTH_FILE = CONFIG_DIR / "live_health.json"
 _recent_requests: List[Dict[str, Any]] = []
+live_health = LiveHealth(LIVE_HEALTH_FILE)
 
 
 def _load_request_logs() -> None:
@@ -93,6 +97,10 @@ def record_request_log(
             json.dump(_recent_requests, f)
     except Exception as e:
         logger.debug(f"Could not write request log: {e}")
+
+    # Passive health: every real request is evidence, so the topology reflects
+    # reality between tests rather than a frozen snapshot.
+    live_health.record(provider, status, model=model, latency_ms=latency_ms, error=error)
     return entry
 
 
@@ -195,6 +203,7 @@ async def health_check():
         "rtk_enabled": config.enable_rtk,
         "available_providers": available_providers,
         "metrics": router.metrics,
+        "provider_health": live_health.snapshot(),
         "prober": {
             "enabled": prober.enabled,
             "running": prober.running,

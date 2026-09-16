@@ -1278,6 +1278,7 @@ print(res.choices[0].message.content)</pre>
 
     let currentConfig = { providers: {} };
     let latestRecentRequests = [];
+    let latestProviderHealth = {};
     let isUserTyping = false;
     let modelSearchQuery = {};
     let currentRequestsFilter = 'all';
@@ -1343,6 +1344,13 @@ print(res.choices[0].message.content)</pre>
       return `${Math.floor(diff / 3600)}h`;
     }
 
+    // formatRelativeTime already says "now", so appending "ago" blindly gives
+    // the nonsense "now ago".
+    function formatAgo(timestamp) {
+      const rel = formatRelativeTime(timestamp);
+      return rel === 'now' ? 'just now' : `${rel} ago`;
+    }
+
     function formatK(num) {
       const n = Number(num) || 0;
       if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
@@ -1369,6 +1377,7 @@ print(res.choices[0].message.content)</pre>
         if (activeProvEl) activeProvEl.innerText = (healthRes.available_providers || []).join(' → ') || 'None ready';
 
         currentConfig = configRes;
+        latestProviderHealth = healthRes.provider_health || {};
         if (configRes.combos) {
           cachedCombos = configRes.combos;
           renderCombos(configRes.combos);
@@ -1376,7 +1385,7 @@ print(res.choices[0].message.content)</pre>
         if (!isUserTyping) {
           renderProviders(configRes.providers || {}, healthRes.available_providers || []);
         }
-        renderTopology(configRes.providers || {}, latestRecentRequests);
+        renderTopology(configRes.providers || {}, latestRecentRequests, latestProviderHealth);
       } catch (err) {
         console.error('Failed to load data', err);
       }
@@ -1390,7 +1399,7 @@ print(res.choices[0].message.content)</pre>
           latestRecentRequests = data.requests;
           renderRecentRequests(data.requests);
           if (currentConfig.providers) {
-            renderTopology(currentConfig.providers, latestRecentRequests);
+            renderTopology(currentConfig.providers, latestRecentRequests, latestProviderHealth);
           }
         }
       } catch (err) {
@@ -1736,7 +1745,20 @@ print(res.choices[0].message.content)</pre>
       }
     }
 
-    function renderTopology(providers, recentRequests) {
+    // Newest recorded test timestamp, used to decide whether live traffic is
+    // fresher than the last test result for a provider.
+    function topoNewestTestAt(conf) {
+      const testRes = conf.test_results || {};
+      let newest = 0;
+      Object.keys(testRes).forEach(m => {
+        const v = testRes[m];
+        if (v && typeof v === 'object') newest = Math.max(newest, v.tested_at || 0);
+      });
+      return newest;
+    }
+
+    function renderTopology(providers, recentRequests, liveHealth) {
+      const live = liveHealth || {};
       const now = Math.floor(Date.now() / 1000);
       const recentProviders = new Set();
       (recentRequests || []).forEach(r => {
@@ -1758,11 +1780,20 @@ print(res.choices[0].message.content)</pre>
         const name = meta ? meta.name : pId.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
         let status = topoStatusOf(conf);
-        // Traffic in the last 10 minutes counts as recent when untested, but a
-        // provider switched off in config is neither — labelling it "untested"
-        // would imply it might work.
-        if (status === 'untested' && conf.enabled === false) status = 'disabled';
-        else if (status === 'untested' && recentProviders.has(pId)) status = 'recent';
+        // A real request is stronger evidence than a test, and much fresher:
+        // prefer it whenever it happened after the newest recorded test.
+        const liveEntry = live[pId];
+        const liveAt = liveEntry ? (liveEntry.at || 0) : 0;
+        const liveIsFresher = liveAt > 0 && liveAt > topoNewestTestAt(conf);
+
+        if (liveIsFresher) {
+          status = liveEntry.status === 'ok' ? 'active' : 'error';
+        } else if (status === 'untested' && conf.enabled === false) {
+          // Labelling a switched-off provider "untested" implies it might work.
+          status = 'disabled';
+        } else if (status === 'untested' && recentProviders.has(pId)) {
+          status = 'recent';
+        }
 
         if (status === 'active') activeCount++;
         if (status === 'error') errorCount++;
@@ -1770,14 +1801,27 @@ print(res.choices[0].message.content)</pre>
         const testRes = conf.test_results || {};
         const okCount = Object.keys(testRes).filter(m => testRes[m]?.status === 'ok').length;
         const errModel = Object.keys(testRes).find(m => testRes[m]?.status === 'error');
-        const errText = errModel ? testRes[errModel]?.error : conf.last_error;
+        const errText = liveIsFresher && liveEntry.status === 'error'
+          ? liveEntry.error
+          : (errModel ? testRes[errModel]?.error : conf.last_error);
 
         const bits = [];
-        if (status === 'active') bits.push(okCount > 0 ? `${okCount} model${okCount === 1 ? '' : 's'} OK` : 'online');
-        if (status === 'recent') bits.push('recent traffic');
+        if (liveIsFresher) {
+          bits.push(
+            `live ${liveEntry.status === 'ok' ? 'OK' : 'failed'} ` +
+            `${liveEntry.latency_ms}ms, ${formatAgo(liveEntry.at)}` +
+            (liveEntry.model ? ` (${liveEntry.model})` : '')
+          );
+        } else if (okCount > 0) {
+          bits.push(`${okCount} model${okCount === 1 ? '' : 's'} OK`);
+        }
+        if (status === 'recent') bits.push('recent traffic, not yet tested');
         if (status === 'untested') bits.push('not tested yet');
         if (status === 'disabled') bits.push('disabled in config');
         if (errText) bits.push(String(errText).slice(0, 160));
+        if (!liveIsFresher && liveAt > 0) {
+          bits.push(`last live traffic ${formatAgo(liveAt)}`);
+        }
 
         nodes.push({
           id: pId,
@@ -1789,7 +1833,12 @@ print(res.choices[0].message.content)</pre>
 
       const summaryEl = document.getElementById('topology-summary');
       if (summaryEl) {
-        summaryEl.innerText = `${activeCount} active · ${errorCount} error · ${nodes.length} configured`;
+        const liveAt = Object.keys(live).reduce((m, k) => Math.max(m, live[k]?.at || 0), 0);
+        const freshness = liveAt
+          ? ` · live traffic ${formatAgo(liveAt)}`
+          : ' · no live traffic yet';
+        summaryEl.innerText =
+          `${activeCount} active · ${errorCount} error · ${nodes.length} configured${freshness}`;
       }
 
       renderTopologyGraph(nodes);

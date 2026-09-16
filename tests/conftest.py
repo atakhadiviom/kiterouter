@@ -17,6 +17,17 @@ def _isolate_config(tmp_path, monkeypatch):
     monkeypatch.setattr("kiterouter.config.CONFIG_DIR", config_dir)
     monkeypatch.setattr("kiterouter.config.CONFIG_FILE", config_dir / "config.json")
 
+    # The server keeps its own copies of these paths, so patching config.py
+    # alone still let request logging and live health write to the real ones.
+    from kiterouter import server
+
+    monkeypatch.setattr(server, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(server, "REQUEST_LOG_FILE", config_dir / "request_log.json")
+    monkeypatch.setattr(server, "LIVE_HEALTH_FILE", config_dir / "live_health.json")
+    monkeypatch.setattr(server.live_health, "path", config_dir / "live_health.json")
+    monkeypatch.setattr(server.live_health, "_entries", {})
+    monkeypatch.setattr(server.live_health, "_last_save", 0.0)
+
 
 @pytest.fixture(autouse=True)
 def _block_real_config_writes(monkeypatch):
