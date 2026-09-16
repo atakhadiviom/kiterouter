@@ -9,9 +9,40 @@ import shutil
 import sqlite3
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from kiterouter.crypto_helper import load_storage_encryption_key, try_decrypt
 
 logger = logging.getLogger("kiterouter.token_fetcher")
+
+
+class FetchResult(dict):
+    """Import result dict with per-provider skip reasons.
+
+    Behaviour: valid credential maps live under provider ids (backward
+    compatible). ``result.skipped[provider_id]`` holds a reason string for
+    providers whose stored rows were NOT imported (e.g.
+    'encrypted-import-unsupported', 'invalid-type').
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self.skipped: Dict[str, str] = {}
+
+
+def _validate_secret(value: Any, encryption_key: Optional[bytes]) -> Tuple[Optional[str], Optional[str]]:
+    """Validate/decode one credential value; returns (usable_value, skip_reason)."""
+    return try_decrypt(value, encryption_key)
+
+
+def _classify_credential(creds: Dict[str, Any]) -> Optional[str]:
+    """Classify a connection as OAuth or API-key; returns adapter kind or None."""
+    if creds.get("api_key") or creds.get("authorization"):
+        return "api-key"
+    if creds.get("access_token") or creds.get("refresh_token"):
+        return "oauth"
+    return None
+
 
 
 class TokenFetcher:
@@ -104,15 +135,22 @@ class TokenFetcher:
         return results
 
     @staticmethod
-    def fetch_from_omniroute(target_provider: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+    def fetch_from_omniroute(target_provider: Optional[str] = None) -> FetchResult:
         """
         Import active tokens stored in OmniRoute (~/.omniroute/storage.sqlite).
+
+        Import policy: only usable credentials are imported. Encrypted
+        ``enc:v1:`` envelopes are decrypted locally when the storage key is
+        available; undecryptable or wrong-typed values cause the provider's
+        import to be SKIPPED entirely (never sent upstream) and recorded in
+        ``result.skipped[provider]``.
         """
+        results = FetchResult()
         db_path = Path.home() / ".omniroute" / "storage.sqlite"
         if not db_path.exists():
-            return {}
+            return results
 
-        results: Dict[str, Any] = {}
+        key_material = load_storage_encryption_key()
         try:
             conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
             c = conn.cursor()
@@ -145,32 +183,52 @@ class TokenFetcher:
                 if target_clean and p_clean != target_clean:
                     continue
 
-                if p_clean not in results:
-                    creds: Dict[str, Any] = {"enabled": True, "source": "omniroute"}
-                    if at:
-                        creds["token"] = at
-                        creds["access_token"] = at
-                    if rt:
-                        creds["refresh_token"] = rt
-                    if ak:
-                        creds["api_key"] = ak
-                    if proj:
-                        creds["project_id"] = proj
-                    if email:
-                        creds["email"] = email
+                if p_clean in results or p_clean in results.skipped:
+                    continue
 
-                    if spec:
-                        try:
-                            extra = json.loads(spec)
-                            if isinstance(extra, dict):
-                                if "machineId" in extra:
-                                    creds["machine_id"] = extra["machineId"]
-                                if "projectId" in extra and not creds.get("project_id"):
-                                    creds["project_id"] = extra["projectId"]
-                        except Exception:
-                            pass
+                # Decode/validate each stored secret; any unusable value
+                # skips the whole provider import (never transmit enc: blobs).
+                decrypted: Dict[str, str] = {}
+                skip_reason: Optional[str] = None
+                for field, value in (("access_token", at), ("refresh_token", rt), ("api_key", ak)):
+                    if value is None:
+                        continue
+                    usable, reason = _validate_secret(value, key_material)
+                    if reason is not None:
+                        skip_reason = reason
+                        break
+                    if usable:
+                        decrypted[field] = usable
 
-                    results[p_clean] = creds
+                if skip_reason is not None:
+                    results.skipped[p_clean] = skip_reason
+                    continue
+
+                creds: Dict[str, Any] = {"enabled": True, "source": "omniroute"}
+                if decrypted.get("access_token"):
+                    creds["token"] = decrypted["access_token"]
+                    creds["access_token"] = decrypted["access_token"]
+                if decrypted.get("refresh_token"):
+                    creds["refresh_token"] = decrypted["refresh_token"]
+                if decrypted.get("api_key"):
+                    creds["api_key"] = decrypted["api_key"]
+                if proj:
+                    creds["project_id"] = proj
+                if email:
+                    creds["email"] = email
+
+                if spec:
+                    try:
+                        extra = json.loads(spec)
+                        if isinstance(extra, dict):
+                            if "machineId" in extra:
+                                creds["machine_id"] = extra["machineId"]
+                            if "projectId" in extra and not creds.get("project_id"):
+                                creds["project_id"] = extra["projectId"]
+                    except Exception:
+                        pass
+
+                results[p_clean] = creds
 
         except Exception as e:
             logger.warning(f"Failed to read from OmniRoute sqlite: {e}")

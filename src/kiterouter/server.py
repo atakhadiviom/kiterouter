@@ -245,13 +245,23 @@ async def sync_source_endpoint(req: SyncSourceRequest):
 
     if req.source == "9router":
         creds_map = TokenFetcher.fetch_from_9router()
+        skipped: dict = getattr(creds_map, "skipped", {}) or {}
     elif req.source == "omniroute":
         creds_map = TokenFetcher.fetch_from_omniroute()
+        skipped = getattr(creds_map, "skipped", {}) or {}
     else:
         return JSONResponse({"status": "error", "message": f"Unsupported source: {req.source}"}, status_code=400)
 
     if not creds_map:
-        return JSONResponse({"status": "warning", "message": f"No active credentials found in {req.source}", "imported_count": 0})
+        msg = f"No active credentials found in {req.source}"
+        if skipped:
+            msg += f" — skipped {len(skipped)} unusable (cannot decrypt / wrong type)"
+        return JSONResponse({
+            "status": "warning",
+            "message": msg,
+            "imported_count": 0,
+            "skipped": skipped,
+        })
 
     imported = []
     for p_name, creds in creds_map.items():
@@ -273,6 +283,8 @@ async def sync_source_endpoint(req: SyncSourceRequest):
         "source": req.source,
         "imported_count": len(imported),
         "imported_providers": imported,
+        "skipped": skipped,
+        "skipped_count": len(skipped),
     }
 
 
