@@ -7,7 +7,7 @@ from kiterouter.providers.antigravity import (
     AntigravityProvider,
     ANTIGRAVITY_TOKEN_URL,
 )
-from kiterouter.providers.cline import ClineProvider, CLINE_API_BASE, OPENROUTER_API_BASE
+from kiterouter.providers.cline import ClineProvider, CLINE_API_BASE, OPENROUTER_CHAT_URL as OPENROUTER_API_BASE
 from kiterouter.providers.opencode_free import (
     OpenCodeFreeProvider,
     build_opencode_headers,
@@ -63,13 +63,18 @@ def test_opencode_go_endpoint():
 # ==========================================
 
 def test_cline_endpoint_resolution():
-    # OpenRouter API key routing
-    p_or = ClineProvider({"api_key": "sk-or-v1-test"})
-    assert p_or.endpoint == OPENROUTER_API_BASE
+    # Cline API is always the primary endpoint; OpenRouter is only a fallback.
+    p_key = ClineProvider({"api_key": "sk-or-v1-test"})
+    assert p_key.endpoint == f"{CLINE_API_BASE}/chat/completions"
+    assert p_key.is_cline_api
 
-    # Cline extension JWT token routing
     p_cline = ClineProvider({"token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test"})
     assert p_cline.endpoint == f"{CLINE_API_BASE}/chat/completions"
+
+    # An explicit endpoint override leaves the Cline API path entirely.
+    p_custom = ClineProvider({"endpoint": OPENROUTER_API_BASE, "api_key": "sk-or-v1-test"})
+    assert p_custom.endpoint == OPENROUTER_API_BASE
+    assert not p_custom.is_cline_api
 
 
 # ==========================================

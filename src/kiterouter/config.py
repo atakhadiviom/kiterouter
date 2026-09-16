@@ -17,10 +17,21 @@ class KiteConfig:
     port: int = 3001
     enable_rtk: bool = True
     max_tool_chars: int = 12000
+    enable_prober: bool = False
+    prober_interval_seconds: int = 900
+    prober_delay_seconds: float = 3.0
+    prober: Dict[str, Any] = field(default_factory=dict)
     providers: Dict[str, Any] = field(default_factory=lambda: {
         "cursor": {"enabled": True, "token": "", "machine_id": ""},
         "antigravity": {"enabled": True, "token": "", "project_id": ""},
-        "cline": {"enabled": True, "api_key": ""},
+        "cline": {
+            "enabled": True,
+            "api_key": "",
+            "access_token": "",
+            "refresh_token": "",
+            "expires_at": 0,
+            "email": "",
+        },
         "opencode_free": {"enabled": True},
         "opencode_go": {"enabled": True, "api_key": ""},
         "kiro": {"enabled": True, "token": ""},
@@ -64,6 +75,10 @@ class KiteConfig:
                 port=port,
                 enable_rtk=data.get("enable_rtk", True),
                 max_tool_chars=data.get("max_tool_chars", 12000),
+                enable_prober=data.get("enable_prober", False),
+                prober_interval_seconds=data.get("prober_interval_seconds", 900),
+                prober_delay_seconds=data.get("prober_delay_seconds", 3.0),
+                prober=data.get("prober", {}) if isinstance(data.get("prober", {}), dict) else {},
                 providers=merged_providers,
                 combos=saved_combos if isinstance(saved_combos, dict) else {},
             )
@@ -96,6 +111,13 @@ class KiteConfig:
             self.providers[provider].update(updates)
         else:
             self.providers[provider] = updates
+        self.save()
+
+    def set_prober_state(self, updates: Dict[str, Any]) -> None:
+        """Merge and persist background health prober state."""
+        if not isinstance(getattr(self, "prober", None), dict):
+            self.prober = {}
+        self.prober.update(updates)
         self.save()
 
 

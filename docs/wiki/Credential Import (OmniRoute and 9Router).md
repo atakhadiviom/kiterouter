@@ -17,6 +17,10 @@ OmniRoute encrypts `api_key` / `access_token` / `refresh_token` fields as `enc:v
 - Existing working credentials are **not clobbered** by a broken import.
 - Sync response carries `imported_providers` + `skipped {provider: reason}`; a sync with zero usable imports reports "no usable credentials imported".
 
+## Local Cline session
+
+The locally installed Cline CLI keeps its own OAuth session (`~/.cline/data/settings/providers.json`, plus VS Code/Cursor extension storage). `POST /api/fetch-token` reads that session directly, and the Cline adapter prefers it over anything imported from a router database — a refresh token copied out of 9Router or OmniRoute may be stale, and a stale copy fails refresh identically to a revoked account. Imported Cline rows are normalized to the same shape so both paths behave the same.
+
 ## Port safety
 
 Sync loops explicitly skip `port`, `host`, `enable_rtk`, `max_tool_chars`, and `KiteConfig.save()` re-forces port 3001 — regression-tested (`test_sync_source_does_not_alter_port`, `test_config_save_guards_port`).

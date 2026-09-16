@@ -282,6 +282,70 @@
       <!-- Test All Models Status Banner -->
       <div id="test-all-banner" class="hidden text-xs p-3 rounded-lg border"></div>
 
+      <!-- Background Health Probing -->
+      <div class="bg-card border border-border rounded-xl p-5 space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="flex items-center gap-2.5">
+            <div class="w-7 h-7 rounded-lg bg-cyan-600/20 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+              <i data-lucide="activity" class="w-4 h-4"></i>
+            </div>
+            <div>
+              <h3 class="font-semibold text-xs text-zinc-100 uppercase tracking-wide">Background health probing</h3>
+              <p class="text-xs text-muted">Periodically probes one model per provider and records real completion results. Nothing is retried in a burst.</p>
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer select-none">
+              <input type="checkbox" id="prober-enabled" onchange="toggleProber(this.checked)" class="accent-cyan-500 w-3.5 h-3.5">
+              Enabled
+            </label>
+            <select id="prober-interval" onchange="updateProberInterval(this.value)" class="bg-zinc-900 border border-border rounded-lg text-xs px-2 py-1.5 text-zinc-300">
+              <option value="300">Every 5 minutes</option>
+              <option value="900">Every 15 minutes</option>
+              <option value="1800">Every 30 minutes</option>
+              <option value="3600">Every hour</option>
+            </select>
+            <button onclick="runProbeNow()" id="btn-probe-now" class="px-3 py-1.5 bg-cyan-600/20 border border-cyan-500/30 hover:bg-cyan-600/30 text-cyan-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+              <i data-lucide="zap" class="w-3.5 h-3.5"></i> Probe Now
+            </button>
+          </div>
+        </div>
+        <div id="prober-summary" class="text-xs text-muted"></div>
+        <div id="prober-results" class="space-y-1.5"></div>
+      </div>
+
+      <!-- Cline Connection -->
+      <div id="cline-auth-card" class="bg-card border border-border rounded-xl p-5 space-y-3">
+        <div class="flex items-center gap-2.5">
+          <div class="w-7 h-7 rounded-lg bg-orange-600/20 border border-orange-500/30 flex items-center justify-center text-orange-400">
+            <i data-lucide="plug-zap" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="font-semibold text-xs text-zinc-100 uppercase tracking-wide">Cline connection</h3>
+            <p class="text-xs text-muted">Shows the real credential state. Re-authenticate here if the linked account stops being accepted upstream.</p>
+          </div>
+        </div>
+        <div id="cline-auth-status" class="text-xs text-muted">Checking…</div>
+        <div id="cline-auth-flow" class="hidden text-xs p-3 rounded-lg border border-cyan-500/40 bg-cyan-950/40 text-cyan-200 space-y-2">
+          <div>Open <a id="cline-verify-link" href="#" target="_blank" rel="noopener" class="underline font-medium">the verification page</a> and enter this code:</div>
+          <div class="flex items-center gap-2">
+            <code id="cline-user-code" class="text-base font-mono font-bold tracking-widest text-cyan-100"></code>
+            <button onclick="copyText(this, document.getElementById('cline-user-code').innerText)" class="p-1.5 rounded hover:bg-cyan-900/60 transition" title="Copy code">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+          <div id="cline-flow-hint" class="text-[11px] text-cyan-300/80">Waiting for approval…</div>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button onclick="startClineReauth()" id="btn-cline-reauth" class="px-3 py-1.5 bg-orange-600/20 border border-orange-500/30 hover:bg-orange-600/30 text-orange-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+            <i data-lucide="key-round" class="w-3.5 h-3.5"></i> Re-authenticate Cline
+          </button>
+          <button onclick="loadClineAuthStatus()" class="px-3 py-1.5 bg-zinc-900 border border-border hover:bg-zinc-800 text-zinc-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh status
+          </button>
+        </div>
+      </div>
+
       <div id="providers-container" class="grid grid-cols-1 md:grid-cols-2 gap-5">
         <!-- Injected via JavaScript -->
       </div>
@@ -829,6 +893,10 @@ print(res.choices[0].message.content)</pre>
       if (tabId === 'combos') {
         loadCombosData();
       }
+      if (tabId === 'providers') {
+        loadProberStatus();
+        loadClineAuthStatus();
+      }
     }
 
     function setRequestsFilter(filter) {
@@ -1170,6 +1238,236 @@ print(res.choices[0].message.content)</pre>
     function escapeHtml(str) {
       if (!str) return '';
       return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // ---------------------------------------------------- background health prober
+
+    async function loadProberStatus() {
+      try {
+        const res = await fetch('/api/prober');
+        if (!res.ok) return;
+        renderProber(await res.json());
+      } catch (e) {
+        console.error('Failed to load prober status', e);
+      }
+    }
+
+    function renderProber(status) {
+      const enabledEl = document.getElementById('prober-enabled');
+      if (enabledEl) enabledEl.checked = !!status.enabled;
+
+      const intervalEl = document.getElementById('prober-interval');
+      if (intervalEl && status.interval_seconds) {
+        const match = [...intervalEl.options].find(o => Number(o.value) === status.interval_seconds);
+        if (match) intervalEl.value = String(status.interval_seconds);
+      }
+
+      const summaryEl = document.getElementById('prober-summary');
+      if (summaryEl) {
+        const s = status.summary || {};
+        const parts = [];
+        if (s.ok) parts.push(`${s.ok} healthy`);
+        if (s.error) parts.push(`${s.error} failing`);
+        if (s.unavailable) parts.push(`${s.unavailable} not configured`);
+        const when = status.last_run ? `${formatRelativeTime(status.last_run)} ago` : 'never run';
+        const next = status.enabled && status.next_run && status.next_run > Math.floor(Date.now() / 1000)
+          ? ` · next in ${formatRelativeTime(status.next_run).replace('now', '~0s')}`
+          : '';
+        summaryEl.innerText = `Last sweep ${when}${status.last_duration_ms ? ` (${status.last_duration_ms}ms)` : ''}${parts.length ? ' · ' + parts.join(', ') : ''}${next}`;
+      }
+
+      const resultsEl = document.getElementById('prober-results');
+      if (!resultsEl) return;
+      const entries = Object.entries(status.providers || {});
+      if (!entries.length) {
+        resultsEl.innerHTML = '<div class="text-xs text-muted">No probe results yet. Enable probing or run a sweep now.</div>';
+        return;
+      }
+      const style = {
+        ok: ['text-emerald-400', 'check-circle', 'healthy'],
+        error: ['text-rose-400', 'alert-circle', 'failing'],
+        unavailable: ['text-zinc-500', 'minus-circle', 'not configured'],
+      };
+      resultsEl.innerHTML = entries.map(([name, info]) => {
+        const [colour, icon, label] = style[info.status] || style.error;
+        const detail = info.status === 'ok'
+          ? `${info.latency_ms}ms`
+          : escapeHtml((info.error || info.reason || label).slice(0, 120));
+        return `<div class="flex items-center justify-between gap-3 text-xs py-1.5 border-t border-border/60">
+          <div class="flex items-center gap-2 min-w-0">
+            <i data-lucide="${icon}" class="w-3.5 h-3.5 shrink-0 ${colour}"></i>
+            <span class="text-zinc-300 font-medium shrink-0">${escapeHtml(name)}</span>
+            <span class="text-muted font-mono truncate">${escapeHtml(info.model || '')}</span>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <span class="${colour}">${detail}</span>
+            <span class="text-muted">${info.probed_at ? formatRelativeTime(info.probed_at) : ''}</span>
+          </div>
+        </div>`;
+      }).join('');
+      if (window.lucide) lucide.createIcons();
+    }
+
+    async function toggleProber(enabled) {
+      try {
+        const res = await fetch('/api/prober', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: enabled })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        renderProber(await res.json());
+      } catch (e) {
+        alert('Could not update the health prober: ' + e.message);
+        loadProberStatus();
+      }
+    }
+
+    async function updateProberInterval(seconds) {
+      try {
+        const res = await fetch('/api/prober', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ interval_seconds: Number(seconds) })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        renderProber(await res.json());
+      } catch (e) {
+        alert('Could not update the probe interval: ' + e.message);
+      }
+    }
+
+    async function runProbeNow() {
+      const btn = document.getElementById('btn-probe-now');
+      if (btn) btn.disabled = true;
+      const summaryEl = document.getElementById('prober-summary');
+      if (summaryEl) summaryEl.innerText = 'Probing providers…';
+      try {
+        const res = await fetch('/api/prober/run', { method: 'POST' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const state = await res.json();
+        renderProber({ ...(await (await fetch('/api/prober')).json()), ...state });
+        loadData();
+      } catch (e) {
+        if (summaryEl) summaryEl.innerText = 'Probe failed: ' + e.message;
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    // --------------------------------------------------------- cline re-auth
+
+    let clineFlowTimer = null;
+
+    async function loadClineAuthStatus() {
+      const el = document.getElementById('cline-auth-status');
+      try {
+        const res = await fetch('/api/cline/auth/status');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        renderClineAuth(await res.json());
+      } catch (e) {
+        if (el) el.innerHTML = `<span class="text-rose-400">Could not read Cline auth status: ${escapeHtml(e.message)}</span>`;
+      }
+    }
+
+    function renderClineAuth(status) {
+      const el = document.getElementById('cline-auth-status');
+      if (!el) return;
+
+      let tone, headline;
+      if (status.reauth_required) {
+        tone = 'text-rose-400';
+        headline = 'Re-authentication required — the linked account is no longer accepted upstream';
+      } else if (!status.has_access_token && !status.has_refresh_token) {
+        tone = 'text-amber-400';
+        headline = 'No Cline credentials configured';
+      } else if (status.expired) {
+        tone = 'text-amber-400';
+        headline = 'Access token expired — it will refresh on the next request';
+      } else {
+        tone = 'text-emerald-400';
+        headline = 'Credentials present and not expired';
+      }
+
+      const facts = [];
+      if (status.email) facts.push(`account ${escapeHtml(status.email)}`);
+      if (status.source) facts.push(`source ${escapeHtml(status.source)}`);
+      if (status.expires_in_seconds !== null && status.expires_in_seconds !== undefined) {
+        const secs = status.expires_in_seconds;
+        if (secs <= 0) facts.push('expired');
+        else if (secs < 120) facts.push(`expires in ~${secs}s`);
+        else facts.push(`expires in ~${Math.round(secs / 60)}m`);
+      }
+      facts.push(status.openrouter_fallback
+        ? 'OpenRouter fallback available'
+        : 'no OpenRouter fallback configured');
+      if (status.local_session_available) {
+        facts.push(`local session found (${escapeHtml(status.local_session_source || 'local')})`);
+      }
+
+      let detail = '';
+      if (status.last_auth_error) {
+        detail = `<div class="text-rose-300/90 mt-1">${escapeHtml(status.last_auth_error)}</div>`;
+      }
+      if (status.last_fallback_model) {
+        detail += `<div class="text-amber-300/90 mt-1">Last request served via OpenRouter as <code>${escapeHtml(status.last_fallback_model)}</code></div>`;
+      }
+
+      el.innerHTML = `<div class="${tone} font-medium">${headline}</div>
+        <div class="text-muted mt-1">${facts.join(' · ')}</div>${detail}`;
+    }
+
+    async function startClineReauth() {
+      const btn = document.getElementById('btn-cline-reauth');
+      if (btn) btn.disabled = true;
+      try {
+        const res = await fetch('/api/cline/auth/start', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        showClineFlow(data);
+      } catch (e) {
+        alert('Could not start Cline re-authentication: ' + e.message);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function showClineFlow(flow) {
+      const box = document.getElementById('cline-auth-flow');
+      const codeEl = document.getElementById('cline-user-code');
+      const linkEl = document.getElementById('cline-verify-link');
+      const hintEl = document.getElementById('cline-flow-hint');
+      if (!box) return;
+      box.classList.remove('hidden');
+      if (codeEl) codeEl.innerText = flow.user_code;
+      if (linkEl) linkEl.href = flow.verification_uri_complete || flow.verification_uri;
+      if (hintEl) hintEl.innerText = 'Waiting for approval…';
+
+      if (clineFlowTimer) clearInterval(clineFlowTimer);
+      const intervalMs = Math.max(3, flow.interval || 5) * 1000;
+      clineFlowTimer = setInterval(() => pollClineFlow(flow.flow_id), intervalMs);
+    }
+
+    async function pollClineFlow(flowId) {
+      const hintEl = document.getElementById('cline-flow-hint');
+      try {
+        const res = await fetch(`/api/cline/auth/poll?flow_id=${encodeURIComponent(flowId)}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'pending') return;
+        clearInterval(clineFlowTimer);
+        clineFlowTimer = null;
+        document.getElementById('cline-auth-flow')?.classList.add('hidden');
+        if (data.status === 'ok') {
+          loadClineAuthStatus();
+          loadData();
+          alert(`Cline re-authenticated${data.email ? ' as ' + data.email : ''}.`);
+        } else {
+          alert(data.message || 'Cline re-authentication failed.');
+          loadClineAuthStatus();
+        }
+      } catch (e) {
+        if (hintEl) hintEl.innerText = 'Poll error: ' + e.message;
+      }
     }
 
     function renderProviders(savedProviders, availableList) {
@@ -2121,9 +2419,12 @@ print(res.choices[0].message.content)</pre>
       fetchRecentRequests();
       populateModelDatalist();
       pingGatewayRadar();
+      loadProberStatus();
+      loadClineAuthStatus();
       setInterval(loadData, 5000);
       setInterval(fetchRecentRequests, 2500);
       setInterval(pingGatewayRadar, 4000);
+      setInterval(loadProberStatus, 20000);
     });
   </script>
 </body>

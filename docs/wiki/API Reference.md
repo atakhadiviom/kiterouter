@@ -90,6 +90,45 @@ Fetches catalogs for every enabled provider.
 
 Run **real** completions. Results are persisted and surfaced as pass/fail with the actual upstream error text — the dashboard never shows "working" from configuration presence alone.
 
+## Background health prober
+
+### `GET /api/prober`
+
+Current prober state: `enabled`, `running`, `interval_seconds`, `delay_seconds`, `last_run`, `last_duration_ms`, `next_run`, `last_error`, plus `providers` (per-provider `status` / `model` / `latency_ms` / `error` / `reason` / `probed_at`) and `summary` (`ok` / `error` / `unavailable`).
+
+### `POST /api/prober`
+
+```json
+{ "enabled": true, "interval_seconds": 900, "delay_seconds": 3.0 }
+```
+
+All fields optional. Starts or stops the background loop and persists the settings. The interval is clamped to a 60-second minimum.
+
+### `POST /api/prober/run`
+
+Runs one probe sweep immediately (synchronously) and returns the same payload as `GET /api/prober`.
+
+Probing is deliberately gentle: providers are probed **sequentially** with a pause between them, unavailable providers cost no request, and nothing is retried in a burst. Results are written to the same per-provider `test_results` store as on-demand tests, so status is uniform across the dashboard.
+
+## Cline re-authentication
+
+### `GET /api/cline/auth/status`
+
+Honest, secret-free credential state: `has_access_token`, `has_refresh_token`, `expires_at`, `expires_in_seconds`, `expired`, `email`, `source`, `reauth_required`, `last_auth_error`, `openrouter_fallback`, `last_fallback_reason`, `last_fallback_model`, `local_session_available`, `local_session_source`.
+
+### `POST /api/cline/auth/start`
+
+Begins a WorkOS device authorization. Returns `flow_id`, `user_code`, `verification_uri`, `verification_uri_complete`, `interval`. The `device_code` is kept server-side and never returned.
+
+### `POST /api/cline/auth/poll`
+
+`?flow_id=…` — polls a pending flow once.
+
+- `{"status": "pending"}` while the user has not approved yet (respect `interval`);
+- `{"status": "ok", "email": …, "expires_at": …}` once approved and the session is persisted;
+- `{"status": "warning"}` when the login succeeded but the account has no linked Cline workspace — upstream calls will still be refused, and saying so is the honest answer;
+- `410` if the flow expired (start again), `404` for an unknown flow.
+
 ### `GET /api/recent-requests`
 Feeds the dashboard's Recent Requests table (model, tokens in/out, latency, status, prompt preview, response preview, tokens saved).
 

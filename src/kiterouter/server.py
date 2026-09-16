@@ -6,6 +6,7 @@ import logging
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -13,13 +14,29 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from kiterouter import cline_auth
 from kiterouter.compressor import compress_messages
 from kiterouter.config import KiteConfig
+from kiterouter.prober import HealthProber
 from kiterouter.router import ProviderRouter
+from kiterouter.token_fetcher import TokenFetcher, normalize_expires_at
 
 logger = logging.getLogger("kiterouter.server")
 
-app = FastAPI(title="KiteRouter", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    if config.enable_prober:
+        prober.interval_seconds = config.prober_interval_seconds
+        prober.delay_seconds = config.prober_delay_seconds
+        prober.start()
+    try:
+        yield
+    finally:
+        await prober.stop()
+
+
+app = FastAPI(title="KiteRouter", version="0.1.0", lifespan=lifespan)
 
 config = KiteConfig.load()
 router = ProviderRouter(config=config)
@@ -178,6 +195,12 @@ async def health_check():
         "rtk_enabled": config.enable_rtk,
         "available_providers": available_providers,
         "metrics": router.metrics,
+        "prober": {
+            "enabled": prober.enabled,
+            "running": prober.running,
+            "interval_seconds": prober.interval_seconds,
+            "last_run": prober.last_run,
+        },
     }
 
 
@@ -205,6 +228,8 @@ async def get_config():
     return {
         "port": config.port,
         "enable_rtk": config.enable_rtk,
+        "enable_prober": config.enable_prober,
+        "prober_interval_seconds": config.prober_interval_seconds,
         "providers": masked_providers,
         "combos": config.combos,
         "available_providers": available,
@@ -447,6 +472,158 @@ def is_error_content(text: str) -> bool:
         "connection refused",
     ]
     return any(marker in t for marker in error_markers)
+
+
+prober = HealthProber(
+    get_router=lambda: router,
+    get_config=lambda: config,
+    evaluate=is_error_content,
+    interval_seconds=config.prober_interval_seconds,
+    delay_seconds=config.prober_delay_seconds,
+)
+
+# Pending interactive Cline re-auth flows, keyed by an opaque flow id so the
+# device code itself never leaves the server.
+_pending_cline_flows: Dict[str, Dict[str, Any]] = {}
+
+
+class ProberUpdateRequest(BaseModel):
+    enabled: Optional[bool] = None
+    interval_seconds: Optional[int] = None
+    delay_seconds: Optional[float] = None
+
+
+@app.get("/api/prober")
+async def get_prober():
+    """Report background health prober state and the last honest probe results."""
+    return prober.status()
+
+
+@app.post("/api/prober")
+async def update_prober(req: ProberUpdateRequest):
+    """Enable/disable the health prober or tune its cadence."""
+    if req.interval_seconds is not None:
+        config.prober_interval_seconds = max(60, int(req.interval_seconds))
+        prober.interval_seconds = config.prober_interval_seconds
+    if req.delay_seconds is not None:
+        config.prober_delay_seconds = max(0.0, float(req.delay_seconds))
+        prober.delay_seconds = config.prober_delay_seconds
+    if req.enabled is not None:
+        config.enable_prober = bool(req.enabled)
+
+    config.save()
+
+    if config.enable_prober:
+        prober.start()
+    else:
+        await prober.stop()
+
+    return prober.status()
+
+
+@app.post("/api/prober/run")
+async def run_prober_now():
+    """Run one probe sweep immediately, regardless of the schedule."""
+    state = await prober.probe_once()
+    return {"status": "completed", **state}
+
+
+@app.get("/api/cline/auth/status")
+async def cline_auth_status():
+    """Honest, secret-free view of the Cline credential state."""
+    provider = router.providers.get("cline")
+    if not provider or not hasattr(provider, "auth_status"):
+        return JSONResponse({"status": "error", "message": "Cline provider unavailable"}, status_code=400)
+
+    status = await provider.auth_status()
+    discovered = TokenFetcher.fetch_cline_credentials()
+    status["local_session_available"] = bool(discovered)
+    status["local_session_source"] = discovered.get("source", "")
+    status["device_verification_uri"] = cline_auth.WORKOS_DEVICE_URL.replace(
+        "/user_management/authorize/device", ""
+    )
+    return status
+
+
+@app.post("/api/cline/auth/start")
+async def cline_auth_start():
+    """Begin interactive Cline re-authentication (WorkOS device authorization)."""
+    try:
+        flow = await cline_auth.start_device_flow()
+    except cline_auth.DeviceFlowError as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=502)
+
+    flow_id = f"flow_{uuid.uuid4().hex[:12]}"
+    _pending_cline_flows[flow_id] = {
+        "device_code": flow["device_code"],
+        "expires_at": time.time() + flow["expires_in"],
+    }
+    return {
+        "status": "pending",
+        "flow_id": flow_id,
+        "user_code": flow["user_code"],
+        "verification_uri": flow["verification_uri"],
+        "verification_uri_complete": flow["verification_uri_complete"],
+        "expires_in": flow["expires_in"],
+        "interval": flow["interval"],
+    }
+
+
+@app.post("/api/cline/auth/poll")
+async def cline_auth_poll(flow_id: str):
+    """Poll a pending Cline re-auth flow; persists the session once approved."""
+    global router
+    flow = _pending_cline_flows.get(flow_id)
+    if not flow:
+        return JSONResponse(
+            {"status": "error", "message": "Unknown or expired re-auth flow"}, status_code=404
+        )
+    if flow["expires_at"] < time.time():
+        _pending_cline_flows.pop(flow_id, None)
+        return JSONResponse(
+            {"status": "error", "message": "Re-auth flow expired; start again"}, status_code=410
+        )
+
+    try:
+        session = await cline_auth.complete_device_flow(flow["device_code"])
+    except cline_auth.AuthorizationPending as e:
+        return {"status": "pending", "interval": e.interval}
+    except cline_auth.DeviceFlowError as e:
+        _pending_cline_flows.pop(flow_id, None)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
+
+    _pending_cline_flows.pop(flow_id, None)
+
+    expires_at = normalize_expires_at(session.get("expires_at"))
+    config.update_provider_tokens(
+        "cline",
+        {
+            "access_token": session["access_token"],
+            "token": session["access_token"],
+            "refresh_token": session["refresh_token"],
+            "expires_at": expires_at,
+            "email": session.get("email", ""),
+            "source": "device-flow",
+        },
+    )
+    router = ProviderRouter(config=config)
+
+    refreshed = router.providers.get("cline")
+    if refreshed is not None and session.get("accounts") is None:
+        return {
+            "status": "warning",
+            "message": (
+                "Cline login succeeded but the account has no linked Cline "
+                "workspace, so upstream calls will still be rejected."
+            ),
+            "email": session.get("email", ""),
+        }
+
+    return {
+        "status": "ok",
+        "email": session.get("email", ""),
+        "expires_at": expires_at,
+    }
 
 
 @app.post("/api/test-provider")

@@ -8,6 +8,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -42,6 +43,39 @@ def _classify_credential(creds: Dict[str, Any]) -> Optional[str]:
     if creds.get("access_token") or creds.get("refresh_token"):
         return "oauth"
     return None
+
+
+def normalize_expires_at(value: Any) -> int:
+    """Normalize an upstream expiry to epoch seconds.
+
+    Sources disagree on the encoding: the Cline API returns ISO-8601
+    ("2026-09-16T18:11:42Z"), the Cline CLI stores milliseconds since epoch,
+    and 9Router stores ISO-8601 with milliseconds
+    ("2026-07-24T14:26:00.488Z"). Returns 0 when the value is unusable.
+    """
+    if value is None or isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        ts = float(value)
+        if ts <= 0:
+            return 0
+        if ts > 100_000_000_000:  # milliseconds since epoch
+            ts /= 1000.0
+        return int(ts)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return 0
+        if text.isdigit():
+            return normalize_expires_at(int(text))
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return 0
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp())
+    return 0
 
 
 
@@ -517,13 +551,102 @@ class TokenFetcher:
             except Exception:
                 pass
 
-        # Fallback to 9Router or OmniRoute cline / claude
-        r9 = TokenFetcher.fetch_from_9router("cline")
-        if "cline" in r9:
-            return r9["cline"]
-        omni = TokenFetcher.fetch_from_omniroute("cline")
-        if "cline" in omni:
-            return omni["cline"]
+        # Fallback to 9Router or OmniRoute claude connection
+        r9 = TokenFetcher.fetch_from_9router("claude")
+        if "claude" in r9:
+            return r9["claude"]
+        omni = TokenFetcher.fetch_from_omniroute("claude")
+        if "claude" in omni:
+            return omni["claude"]
+
+        return {}
+
+    @staticmethod
+    def _read_cline_auth_file(path: Path) -> Optional[Dict[str, Any]]:
+        """Read a Cline CLI / extension settings file into a credential dict."""
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return None
+        auth = data.get("providers", {}).get("cline", {}).get("settings", {}).get("auth", {})
+        if not isinstance(auth, dict):
+            return None
+
+        access = auth.get("accessToken") or auth.get("access_token") or ""
+        refresh = auth.get("refreshToken") or auth.get("refresh_token") or ""
+        if not access and not refresh:
+            return None
+
+        user_info = (auth.get("metadata") or {}).get("userInfo") or {}
+        return {
+            "access_token": access,
+            "token": access,
+            "refresh_token": refresh,
+            "expires_at": normalize_expires_at(auth.get("expiresAt") or auth.get("expires_at")),
+            "email": user_info.get("email") or auth.get("email") or "",
+        }
+
+    @staticmethod
+    def fetch_cline_credentials() -> Dict[str, Any]:
+        """Discover the live Cline CLI / extension OAuth session on this machine.
+
+        The locally installed Cline client is preferred over credentials
+        imported from another router's database. Cline refresh tokens are
+        long-lived and get copied around, so a stale copy refreshes with
+        HTTP 400 and is indistinguishable from a revoked account at call
+        time — taking the freshest local session avoids that trap.
+        """
+        candidates: List[Dict[str, Any]] = []
+
+        found = TokenFetcher._read_cline_auth_file(
+            Path.home() / ".cline" / "data" / "settings" / "providers.json"
+        )
+        if found:
+            found["source"] = "cline-cli"
+            candidates.append(found)
+
+        global_storage_dirs = [
+            Path.home() / "Library" / "Application Support" / "Code" / "User" / "globalStorage",
+            Path.home() / "Library" / "Application Support" / "Cursor" / "User" / "globalStorage",
+            Path.home() / ".config" / "Code" / "User" / "globalStorage",
+        ]
+        for base in global_storage_dirs:
+            for ext_id in ("saoudrizwan.claude-dev", "cline.cline"):
+                found = TokenFetcher._read_cline_auth_file(base / ext_id / "settings" / "providers.json")
+                if found:
+                    found["source"] = f"extension:{ext_id}"
+                    candidates.append(found)
+
+        usable = [c for c in candidates if c.get("refresh_token") or c.get("access_token")]
+        if usable:
+            best = max(
+                usable,
+                key=lambda c: (bool(c.get("refresh_token")), c.get("expires_at") or 0),
+            )
+            best["enabled"] = True
+            return best
+
+        for fetcher, label in (
+            (TokenFetcher.fetch_from_9router, "9router"),
+            (TokenFetcher.fetch_from_omniroute, "omniroute"),
+        ):
+            imported = fetcher("cline")
+            if isinstance(imported, dict) and imported.get("cline"):
+                raw = imported["cline"]
+                access = raw.get("access_token") or raw.get("accessToken") or raw.get("token") or ""
+                refresh = raw.get("refresh_token") or raw.get("refreshToken") or ""
+                return {
+                    "access_token": access,
+                    "token": access,
+                    "refresh_token": refresh,
+                    "expires_at": normalize_expires_at(
+                        raw.get("expires_at") or raw.get("expiresAt")
+                    ),
+                    "email": raw.get("email") or "",
+                    "source": label,
+                    "enabled": True,
+                }
 
         return {}
 
@@ -560,7 +683,7 @@ class TokenFetcher:
             return creds
         elif p == "copilot":
             return TokenFetcher.fetch_copilot_credentials()
-        elif p in ("claude", "cline"):
+        elif p == "claude":
             creds = TokenFetcher.fetch_claude_credentials()
             if not creds:
                 r9 = TokenFetcher.fetch_from_9router(p)
@@ -569,6 +692,8 @@ class TokenFetcher:
                 omni = TokenFetcher.fetch_from_omniroute(p)
                 return omni.get(p, {})
             return creds
+        elif p == "cline":
+            return TokenFetcher.fetch_cline_credentials()
         elif p == "codex":
             return TokenFetcher.fetch_codex_credentials()
         elif p in ("command_code", "cmd", "command-code"):
