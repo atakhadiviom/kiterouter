@@ -92,7 +92,8 @@ vm.runInContext(
   'setRailCollapsed, toggleRail, storedRailCollapsed, railIsCollapsed, RAIL_STORAGE_KEY, ' +
   'renderTopology, renderTopologyGraph, topoZoom, topoFit, topoStatusOf, topoEdgePath, ' +
   'initTopologyInteractions, TOPO, renderHealthStats, renderHealthConnections, ' +
-  'renderHealthRecent, formatMs, formatBytes, nodeSettingsHtml, NODE_API_TYPES, renderCatalog };',
+  'renderHealthRecent, formatMs, formatBytes, nodeSettingsHtml, NODE_API_TYPES, renderCatalog, ' +
+  'renderLogs, renderLogStats, logToCurl };',
   ctx
 );
 const t = ctx.__t;
@@ -376,6 +377,47 @@ check(!/NaN/.test(recentHtml), 'no NaN in the recent list');
 
 t.renderHealthRecent([]);
 check(/Nothing probed yet/.test(healthRecent._innerHTML), 'empty recent list should explain itself');
+
+// ── request log ───────────────────────────────────────────────────────────
+const logsStats = reg('logs-stats');
+const logsBody = reg('logs-body', 'tbody');
+
+t.renderLogStats({ total: 12, ok: 10, failed: 2, ok_rate_pct: 83.3, avg_latency_ms: 1831, avg_ttft_ms: 1690 });
+const logsStatsHtml = logsStats._innerHTML;
+check(/83\.3%/.test(logsStatsHtml), 'success rate should be shown');
+check(/1\.8s/.test(logsStatsHtml), 'average latency should be humanised');
+check(/1\.7s/.test(logsStatsHtml), 'average TTFT should be shown');
+check(/2 failed/.test(logsStatsHtml), 'failures should be counted');
+
+const nowLogs = Math.floor(Date.now() / 1000);
+t.renderLogs([
+  { id: 2, at: nowLogs - 30, provider: 'copilot', model: 'gh/gpt-4o', status: 'ok',
+    ttft_ms: 1690, latency_ms: 1831, tokens_in: 7, tokens_out: 3, error: null },
+  { id: 1, at: nowLogs - 600, provider: 'glm', model: 'glm-5.1', status: 'error',
+    ttft_ms: null, latency_ms: 90, tokens_in: 5, tokens_out: 0, error: 'HTTP 401 unauthorized' },
+]);
+const logsHtml = logsBody._innerHTML;
+check(logsHtml.split('<tr').length - 1 === 2, `expected 2 log rows, got ${logsHtml.split('<tr').length - 1}`);
+check(/copilot/.test(logsHtml) && /glm-5\.1/.test(logsHtml), 'both requests should render');
+check(/openLog\(2\)/.test(logsHtml), 'a row should open its detail');
+check(/HTTP 401/.test(logsHtml), 'the upstream error should be visible in the list');
+check(!/undefined|NaN/.test(logsHtml), 'no undefined/NaN in the log rows');
+// a missing TTFT must render as a dash, not a fake number
+check(/—/.test(logsHtml), 'a missing TTFT should render as a dash');
+
+t.renderLogs([]);
+check(/No requests match/.test(logsBody._innerHTML), 'an empty log should explain itself');
+
+// curl replay is built from the stored body
+const curl = t.logToCurl(
+  { id: 5, model: 'copilot/gh/gpt-4o', prompt_preview: 'hi' },
+  { request: { model: 'copilot/gh/gpt-4o', messages: [{ role: 'user', content: 'hi' }], stream: false } }
+);
+check(/^curl -s http:\/\/127\.0\.0\.1:3001\/v1\/chat\/completions/.test(curl), 'curl should target the local gateway');
+check(/"messages":\[\{"role":"user"/.test(curl), 'the original messages should be replayed');
+// and it must still work when the body has expired
+const curlNoBody = t.logToCurl({ id: 6, model: 'glm/glm-5.1', prompt_preview: 'p' }, null);
+check(/glm\/glm-5\.1/.test(curlNoBody), 'an expired body should fall back to the preview');
 
 // ── model catalogs ────────────────────────────────────────────────────────
 const catalogSummary = reg('catalog-summary', 'p');

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -38,7 +39,13 @@ async def _store_maintenance_loop() -> None:
     while True:
         await asyncio.sleep(max(60, int(config.store_maintenance_seconds)))
         try:
-            result = await asyncio.to_thread(store.maintain, config.retention_days(), 7)
+            result = await asyncio.to_thread(
+                store.maintain,
+                config.retention_days(),
+                7,
+                None,
+                config.retention_bodies_days,
+            )
             if result.get("pruned") or result.get("vacuumed"):
                 logger.info("Store maintenance: %s", result)
         except Exception as e:
@@ -93,6 +100,7 @@ CONFIG_DIR = Path.home() / ".kiterouter"
 REQUEST_LOG_FILE = CONFIG_DIR / "request_log.json"
 LIVE_HEALTH_FILE = CONFIG_DIR / "live_health.json"
 STORE_FILE = CONFIG_DIR / "kiterouter.db"
+BODY_DIR = CONFIG_DIR / "bodies"
 _recent_requests: List[Dict[str, Any]] = []
 live_health = LiveHealth(LIVE_HEALTH_FILE)
 store = Store(STORE_FILE)
@@ -146,6 +154,49 @@ def _load_request_logs() -> None:
             _recent_requests = []
 
 
+def derive_session_key(messages: List[Dict[str, Any]]) -> Optional[str]:
+    """A stable key for a conversation, derived from its opening turn.
+
+    A heuristic: the first user message identifies the session, so follow-up
+    turns of the same conversation group together. Conversation tracking (Phase
+    C) refines this; recording it now means the history is already grouped when
+    that lands.
+    """
+    for message in messages or []:
+        if isinstance(message, dict) and message.get("role") == "user":
+            text = str(message.get("content") or "").strip()
+            if text:
+                return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    return None
+
+
+def write_request_body(body: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Persist a request/response body as a capped file.
+
+    Bodies are the disk-heavy part of history, so they live as files with their
+    own shorter retention rather than as database rows — the layout OmniRoute
+    uses, and the reason it can keep 90 days of logs without the database
+    exploding.
+    """
+    if not body or not config.save_bodies:
+        return None
+    try:
+        BODY_DIR.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(body, default=str)
+        if len(payload) > int(config.max_body_bytes):
+            payload = payload[: int(config.max_body_bytes)] + '"…truncated by KiteRouter"}'
+        name = f"{int(time.time())}-{uuid.uuid4().hex[:8]}.json"
+        day_dir = BODY_DIR / time.strftime("%Y-%m-%d")
+        day_dir.mkdir(parents=True, exist_ok=True)
+        path = day_dir / name
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(payload)
+        return str(path)
+    except Exception as e:
+        logger.debug("Could not write request body: %s", e)
+        return None
+
+
 def record_request_log(
     model: str,
     provider: str,
@@ -157,6 +208,11 @@ def record_request_log(
     prompt_preview: Optional[str] = None,
     response_preview: Optional[str] = None,
     tokens_saved: int = 0,
+    ttft_ms: Optional[int] = None,
+    connection: Optional[str] = None,
+    session_key: Optional[str] = None,
+    combo: Optional[str] = None,
+    body: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     global _recent_requests
     entry = {
@@ -168,6 +224,7 @@ def record_request_log(
         "tokens_out": max(0, int(tokens_out)),
         "status": status,
         "latency_ms": int(latency_ms),
+        "ttft_ms": int(ttft_ms) if ttft_ms is not None else None,
         "error": error,
         "prompt_preview": (prompt_preview or "")[:400],
         "response_preview": (response_preview or "")[:400],
@@ -181,6 +238,30 @@ def record_request_log(
             json.dump(_recent_requests, f)
     except Exception as e:
         logger.debug(f"Could not write request log: {e}")
+
+    # Durable history. The ring buffer above still feeds the topology, which only
+    # ever looks at the newest few entries.
+    try:
+        row_id = store.record_request(
+            provider=provider,
+            model=model,
+            status=status,
+            latency_ms=latency_ms,
+            ttft_ms=ttft_ms,
+            connection=connection,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            rtk_saved=tokens_saved,
+            combo=combo,
+            session_key=session_key,
+            error=error,
+            prompt_preview=prompt_preview,
+            response_preview=response_preview,
+            body_path=write_request_body(body),
+        )
+        entry["store_id"] = row_id
+    except Exception as e:
+        logger.debug("Could not persist request: %s", e)
 
     # Passive health: every real request is evidence, so the topology reflects
     # reality between tests rather than a frozen snapshot.
@@ -678,8 +759,14 @@ async def store_stats():
 
 @app.post("/api/store/maintain")
 async def store_maintain():
-    """Run prune + checkpoint (and vacuum when due) now."""
-    result = await asyncio.to_thread(store.maintain, config.retention_days(), 7)
+    """Run prune + checkpoint (+ vacuum when due, + body expiry) now."""
+    result = await asyncio.to_thread(
+        store.maintain,
+        config.retention_days(),
+        7,
+        None,
+        config.retention_bodies_days,
+    )
     return {"status": "completed", **result, **(await asyncio.to_thread(store.stats))}
 
 
@@ -830,6 +917,60 @@ async def refresh_model_catalog(req: Optional[RefreshCatalogRequest] = None):
             store.expire_models, config.catalog_unseen_days
         )
     return {"status": "success", **result}
+
+
+@app.get("/api/logs")
+async def list_logs(
+    limit: int = 50,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    status: Optional[str] = None,
+    days: Optional[int] = None,
+    before_id: Optional[int] = None,
+):
+    """Durable request history, newest first.
+
+    Pages backwards by ``before_id`` rather than OFFSET so rows arriving mid-page
+    cannot make the next page skip or repeat entries.
+    """
+    since = int(time.time()) - days * 86400 if days else None
+    rows = await asyncio.to_thread(
+        store.recent_requests,
+        limit,
+        provider,
+        model,
+        status,
+        since,
+        before_id,
+    )
+    return {
+        "status": "success",
+        "requests": rows,
+        "count": len(rows),
+        "stats": await asyncio.to_thread(store.request_stats, since),
+        "next_before_id": rows[-1]["id"] if len(rows) == max(1, limit) else None,
+    }
+
+
+@app.get("/api/logs/{request_id}")
+async def get_log(request_id: int):
+    """One request, with its body artifacts when they have not expired."""
+    row = await asyncio.to_thread(store.request_by_id, request_id)
+    if not row:
+        return JSONResponse({"status": "error", "message": "Request not found"}, status_code=404)
+
+    body = None
+    path = row.get("body_path")
+    if path:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                body = json.load(f)
+        except FileNotFoundError:
+            body = None  # expired: the row outlives the body by design
+        except Exception as e:
+            body = {"error": f"could not read body: {e}"}
+
+    return {"status": "success", "request": row, "body": body, "body_expired": bool(path) and body is None}
 
 
 @app.get("/api/cline/auth/status")
@@ -1379,6 +1520,7 @@ async def chat_completions(req: ChatCompletionRequest):
     prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
     prompt_str = str(messages[-1].get("content", "")) if messages else ""
     tokens_in = max(1, prompt_chars // 4)
+    session_key = derive_session_key(messages)
     start_time = time.time()
     combo_info = router.get_combo(req.model)
     if combo_info:
@@ -1394,6 +1536,7 @@ async def chat_completions(req: ChatCompletionRequest):
             full_text = []
             has_error = False
             err_text = None
+            first_content_at: Optional[float] = None
             try:
                 async for chunk in router.stream_with_fallback(
                     model=req.model,
@@ -1405,9 +1548,13 @@ async def chat_completions(req: ChatCompletionRequest):
                         try:
                             payload = json.loads(chunk[6:].strip())
                             delta = payload.get("choices", [{}])[0].get("delta", {})
-                            c = delta.get("content", "")
-                            if c:
-                                full_text.append(c)
+                            text = extract_delta_text(delta)
+                            if text:
+                                # Time to first token, measured where the client
+                                # would see it rather than inferred later.
+                                if first_content_at is None:
+                                    first_content_at = time.time()
+                                full_text.append(text)
                         except Exception:
                             pass
                     yield chunk
@@ -1419,6 +1566,11 @@ async def chat_completions(req: ChatCompletionRequest):
                 resp_text = "".join(full_text)
                 tokens_out = max(1, len(resp_text) // 4)
                 latency_ms = round((time.time() - start_time) * 1000)
+                ttft_ms = (
+                    round((first_content_at - start_time) * 1000)
+                    if first_content_at is not None
+                    else None
+                )
                 if not has_error and is_error_content(resp_text):
                     has_error = True
                     err_text = resp_text[:200]
@@ -1429,10 +1581,23 @@ async def chat_completions(req: ChatCompletionRequest):
                     tokens_out=tokens_out,
                     status="error" if has_error else "ok",
                     latency_ms=latency_ms,
+                    ttft_ms=ttft_ms,
                     error=err_text,
                     prompt_preview=prompt_str,
                     response_preview=resp_text,
                     tokens_saved=rtk_saved,
+                    session_key=session_key,
+                    combo=combo_info["name"] if combo_info else None,
+                    body={
+                        "request": {
+                            "model": req.model,
+                            "messages": messages,
+                            "max_tokens": req.max_tokens,
+                            "temperature": req.temperature,
+                            "stream": True,
+                        },
+                        "response": {"text": resp_text[:20000], "status": "error" if has_error else "ok"},
+                    },
                 )
 
         return StreamingResponse(logging_stream(), media_type="text/event-stream")
@@ -1441,6 +1606,7 @@ async def chat_completions(req: ChatCompletionRequest):
         full_text = []
         has_error = False
         err_text = None
+        first_content_at: Optional[float] = None
         try:
             async for chunk in router.stream_with_fallback(
                 model=req.model,
@@ -1457,6 +1623,8 @@ async def chat_completions(req: ChatCompletionRequest):
                         # empty text for non-streaming clients.
                         text = extract_delta_text(delta)
                         if text:
+                            if first_content_at is None:
+                                first_content_at = time.time()
                             full_text.append(text)
                     except Exception:
                         continue
@@ -1467,6 +1635,11 @@ async def chat_completions(req: ChatCompletionRequest):
         resp_text = "".join(full_text)
         tokens_out = max(1, len(resp_text) // 4)
         latency_ms = round((time.time() - start_time) * 1000)
+        ttft_ms = (
+            round((first_content_at - start_time) * 1000)
+            if first_content_at is not None
+            else None
+        )
         if not has_error and is_error_content(resp_text):
             has_error = True
             err_text = resp_text[:200]
@@ -1478,10 +1651,23 @@ async def chat_completions(req: ChatCompletionRequest):
             tokens_out=tokens_out,
             status="error" if has_error else "ok",
             latency_ms=latency_ms,
+            ttft_ms=ttft_ms,
             error=err_text,
             prompt_preview=prompt_str,
             response_preview=resp_text,
             tokens_saved=rtk_saved,
+            session_key=session_key,
+            combo=combo_info["name"] if combo_info else None,
+            body={
+                "request": {
+                    "model": req.model,
+                    "messages": messages,
+                    "max_tokens": req.max_tokens,
+                    "temperature": req.temperature,
+                    "stream": False,
+                },
+                "response": {"text": resp_text[:20000], "status": "error" if has_error else "ok"},
+            },
         )
 
         return {

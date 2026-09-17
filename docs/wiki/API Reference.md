@@ -150,6 +150,22 @@ Restores providers, combos, and gateway settings from a JSON payload.
 
 `provider_health` is passive: every logged request records `{status, model, latency_ms, at, error?}` for its provider. The dashboard prefers it over a recorded test whenever it is fresher, so the topology reflects reality between test runs. It is kept in memory with a throttled write to `~/.kiterouter/live_health.json` — deliberately not the main config, which is large and rewritten wholesale.
 
+## Request log
+
+### `GET /api/logs`
+
+Durable request history, newest first. Query: `limit`, `provider`, `model`, `status`, `days`, `before_id`.
+
+Returns `requests`, `count`, `stats` (`total`, `ok`, `failed`, `ok_rate_pct`, `avg_latency_ms`, `avg_ttft_ms`, token totals) and `next_before_id`.
+
+Paging is by `before_id`, not `OFFSET`, so a request arriving mid-page cannot make the next page skip or repeat rows.
+
+### `GET /api/logs/{id}`
+
+One request plus its body artifact: `request`, `body`, `body_expired`. A body is `{request: {model, messages, max_tokens, temperature, stream}, response: {text, status}}` — enough to replay the call.
+
+`body_expired: true` means the row outlived its body, which is by design: bodies are kept for `retention_bodies_days` (3) while the rows last `retention_requests_days` (30). Returns `404` for an unknown id.
+
 ## Model catalogs
 
 ### `GET /api/models/catalog`

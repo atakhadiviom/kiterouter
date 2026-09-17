@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger("kiterouter.store")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 # (version, [statements]) — applied in order, once each, tracked by user_version.
 MIGRATIONS: Sequence[Tuple[int, Sequence[str]]] = (
@@ -68,6 +68,50 @@ MIGRATIONS: Sequence[Tuple[int, Sequence[str]]] = (
             """,
             "CREATE INDEX IF NOT EXISTS idx_models_provider ON models(provider)",
             "CREATE INDEX IF NOT EXISTS idx_models_last_seen ON models(last_seen_at)",
+        ),
+    ),
+    (
+        3,
+        (
+            # Real request history. Until now this was a 100-entry in-memory ring
+            # buffer of 400-character previews, which cannot answer "what is p95
+            # for this provider" or "what did this cost".
+            """
+            CREATE TABLE IF NOT EXISTS requests (
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                at                   INTEGER NOT NULL,
+                provider             TEXT,
+                connection           TEXT,
+                model                TEXT,
+                status               TEXT    NOT NULL,
+                latency_ms           INTEGER,
+                ttft_ms              INTEGER,
+                tokens_in            INTEGER DEFAULT 0,
+                tokens_out           INTEGER DEFAULT 0,
+                tokens_cache_read    INTEGER DEFAULT 0,
+                tokens_cache_write   INTEGER DEFAULT 0,
+                tokens_reasoning     INTEGER DEFAULT 0,
+                rtk_saved            INTEGER DEFAULT 0,
+                combo                TEXT,
+                session_key          TEXT,
+                api_key_id           TEXT,
+                error                TEXT,
+                prompt_preview       TEXT,
+                response_preview     TEXT
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_requests_at ON requests(at)",
+            "CREATE INDEX IF NOT EXISTS idx_requests_provider ON requests(provider, at)",
+            "CREATE INDEX IF NOT EXISTS idx_requests_model ON requests(model, at)",
+            "CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status, at)",
+        ),
+    ),
+    (
+        4,
+        (
+            # Bodies are the disk-heavy part, so they live as capped files rather
+            # than rows, and expire on their own (shorter) retention.
+            "ALTER TABLE requests ADD COLUMN body_path TEXT",
         ),
     ),
 )
@@ -321,6 +365,180 @@ class Store:
             self._conn.commit()
         return removed
 
+    # -------------------------------------------------------------- requests
+
+    def record_request(
+        self,
+        provider: Optional[str],
+        model: Optional[str],
+        status: str,
+        latency_ms: Optional[int] = None,
+        ttft_ms: Optional[int] = None,
+        connection: Optional[str] = None,
+        tokens_in: int = 0,
+        tokens_out: int = 0,
+        tokens_cache_read: int = 0,
+        tokens_cache_write: int = 0,
+        tokens_reasoning: int = 0,
+        rtk_saved: int = 0,
+        combo: Optional[str] = None,
+        session_key: Optional[str] = None,
+        api_key_id: Optional[str] = None,
+        error: Optional[str] = None,
+        prompt_preview: Optional[str] = None,
+        response_preview: Optional[str] = None,
+        body_path: Optional[str] = None,
+        at: Optional[int] = None,
+    ) -> int:
+        """Persist one request. Returns its row id."""
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO requests (
+                    at, provider, connection, model, status, latency_ms, ttft_ms,
+                    tokens_in, tokens_out, tokens_cache_read, tokens_cache_write,
+                    tokens_reasoning, rtk_saved, combo, session_key, api_key_id,
+                    error, prompt_preview, response_preview, body_path
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    int(at if at is not None else time.time()),
+                    provider,
+                    connection,
+                    model,
+                    status,
+                    int(latency_ms) if latency_ms is not None else None,
+                    int(ttft_ms) if ttft_ms is not None else None,
+                    int(tokens_in or 0),
+                    int(tokens_out or 0),
+                    int(tokens_cache_read or 0),
+                    int(tokens_cache_write or 0),
+                    int(tokens_reasoning or 0),
+                    int(rtk_saved or 0),
+                    combo,
+                    session_key,
+                    api_key_id,
+                    (str(error)[:1000] if error else None),
+                    (str(prompt_preview)[:400] if prompt_preview else None),
+                    (str(response_preview)[:400] if response_preview else None),
+                    body_path,
+                ),
+            )
+            self._conn.commit()
+            return int(cursor.lastrowid or 0)
+
+    def recent_requests(
+        self,
+        limit: int = 50,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        status: Optional[str] = None,
+        since: Optional[int] = None,
+        before_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Newest first. ``before_id`` pages backwards without OFFSET drift."""
+        clauses: List[str] = []
+        params: List[Any] = []
+        if provider:
+            clauses.append("provider = ?")
+            params.append(provider)
+        if model:
+            clauses.append("model = ?")
+            params.append(model)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if since is not None:
+            clauses.append("at >= ?")
+            params.append(int(since))
+        if before_id is not None:
+            clauses.append("id < ?")
+            params.append(int(before_id))
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, int(limit)))
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM requests {where} ORDER BY id DESC LIMIT ?", params
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def request_by_id(self, request_id: int) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM requests WHERE id = ?", (int(request_id),)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def request_stats(self, since: Optional[int] = None) -> Dict[str, Any]:
+        """Counts, success rate and totals over a window."""
+        clause, params = ("WHERE at >= ?", (int(since),)) if since is not None else ("", ())
+        with self._lock:
+            row = self._conn.execute(
+                f"""
+                SELECT COUNT(*)                              AS total,
+                       SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS ok,
+                       CAST(AVG(latency_ms) AS INTEGER)      AS avg_latency_ms,
+                       CAST(AVG(ttft_ms) AS INTEGER)         AS avg_ttft_ms,
+                       SUM(tokens_in)                       AS tokens_in,
+                       SUM(tokens_out)                      AS tokens_out,
+                       SUM(rtk_saved)                       AS rtk_saved,
+                       MAX(at)                              AS last_at
+                FROM requests {clause}
+                """,
+                params,
+            ).fetchone()
+        stats = dict(row) if row else {}
+        total = int(stats.get("total") or 0)
+        ok = int(stats.get("ok") or 0)
+        stats["total"] = total
+        stats["ok"] = ok
+        stats["failed"] = total - ok
+        stats["ok_rate_pct"] = round(ok * 100.0 / total, 1) if total else 0.0
+        return stats
+
+    def count_requests(self) -> int:
+        with self._lock:
+            return int(self._conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0] or 0)
+
+    # ------------------------------------------------------------------ bodies
+
+    def prune_bodies(self, retention_days: int, now: Optional[int] = None) -> int:
+        """Delete body files past their (shorter) retention, then clear the refs.
+
+        Bodies are the disk-heavy part, so they expire well before the request
+        rows that point at them.
+        """
+        if not retention_days:
+            return 0
+        moment = int(now if now is not None else time.time())
+        cutoff = moment - int(retention_days) * 86400
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, body_path FROM requests WHERE body_path IS NOT NULL AND at < ?",
+                (cutoff,),
+            ).fetchall()
+
+        removed = 0
+        for row in rows:
+            path = Path(row["body_path"]) if row["body_path"] else None
+            try:
+                if path and path.exists():
+                    path.unlink()
+                    removed += 1
+            except Exception as e:
+                logger.debug("Could not remove body %s: %s", path, e)
+
+        if rows:
+            ids = [int(r["id"]) for r in rows]
+            with self._lock:
+                self._conn.executemany(
+                    "UPDATE requests SET body_path = NULL WHERE id = ?", [(i,) for i in ids]
+                )
+                self._conn.commit()
+        return removed
+
     # ------------------------------------------------------------- maintenance
 
     def prune(self, retention_days: Dict[str, int], now: Optional[int] = None) -> int:
@@ -331,6 +549,23 @@ class Store:
             if not days:
                 continue
             cutoff = moment - int(days) * 86400
+
+            # Bodies carry their own, shorter retention, but if a row is being
+            # dropped take its file with it rather than leaving an orphan.
+            if table == "requests":
+                with self._lock:
+                    rows = self._conn.execute(
+                        "SELECT body_path FROM requests WHERE at < ? AND body_path IS NOT NULL",
+                        (cutoff,),
+                    ).fetchall()
+                for row in rows:
+                    try:
+                        candidate = Path(row["body_path"])
+                        if candidate.exists():
+                            candidate.unlink()
+                    except Exception as e:
+                        logger.debug("Could not remove body %s: %s", row["body_path"], e)
+
             with self._lock:
                 cur = self._conn.execute(f"DELETE FROM {table} WHERE at < ?", (cutoff,))
                 removed += max(0, cur.rowcount or 0)
@@ -377,12 +612,21 @@ class Store:
         retention_days: Dict[str, int],
         vacuum_interval_days: int = 7,
         now: Optional[int] = None,
+        body_retention_days: int = 0,
     ) -> Dict[str, Any]:
-        """Prune, checkpoint, and vacuum when due. Safe to call often."""
+        """Prune, expire bodies, checkpoint, and vacuum when due."""
         moment = int(now if now is not None else time.time())
-        result: Dict[str, Any] = {"pruned": 0, "checkpointed": False, "vacuumed": False}
+        result: Dict[str, Any] = {
+            "pruned": 0,
+            "bodies_removed": 0,
+            "checkpointed": False,
+            "vacuumed": False,
+        }
 
         result["pruned"] = self.prune(retention_days, now=moment)
+        # Bodies expire on their own, shorter window: they are the disk-heavy part.
+        if body_retention_days:
+            result["bodies_removed"] = self.prune_bodies(body_retention_days, now=moment)
         self.checkpoint()
         result["checkpointed"] = True
 
@@ -412,9 +656,22 @@ class Store:
             checks = int(
                 self._conn.execute("SELECT COUNT(*) FROM health_checks").fetchone()[0] or 0
             )
+            requests = int(
+                self._conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0] or 0
+            )
+            models = int(self._conn.execute("SELECT COUNT(*) FROM models").fetchone()[0] or 0)
+            bodies = int(
+                self._conn.execute(
+                    "SELECT COUNT(*) FROM requests WHERE body_path IS NOT NULL"
+                ).fetchone()[0]
+                or 0
+            )
         return {
             "schema_version": self.schema_version,
             "health_checks": checks,
+            "requests": requests,
+            "models": models,
+            "bodies": bodies,
             "size_bytes": self.size_bytes(),
             "wal_bytes": self.wal_bytes,
             "last_vacuum": int(self.last_vacuum()) or None,

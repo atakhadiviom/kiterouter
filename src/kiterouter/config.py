@@ -37,6 +37,10 @@ class KiteConfig:
     max_test_results_per_provider: int = 60
     catalog_refresh_hours: int = 24
     catalog_unseen_days: int = 14
+    # Bodies are the disk-heavy part of history: capped per file, and expired
+    # well before the request rows that point at them.
+    save_bodies: bool = True
+    max_body_bytes: int = 200_000
     providers: Dict[str, Any] = field(default_factory=lambda: {
         "cursor": {"enabled": True, "token": "", "machine_id": ""},
         "antigravity": {"enabled": True, "token": "", "project_id": ""},
@@ -105,6 +109,8 @@ class KiteConfig:
                 max_test_results_per_provider=data.get("max_test_results_per_provider", 60),
                 catalog_refresh_hours=data.get("catalog_refresh_hours", 24),
                 catalog_unseen_days=data.get("catalog_unseen_days", 14),
+                save_bodies=data.get("save_bodies", True),
+                max_body_bytes=data.get("max_body_bytes", 200_000),
                 providers=merged_providers,
                 combos=saved_combos if isinstance(saved_combos, dict) else {},
             )
@@ -148,7 +154,10 @@ class KiteConfig:
 
     def retention_days(self) -> Dict[str, int]:
         """Retention per stored table — only tables that actually exist."""
-        return {"health_checks": int(self.retention_health_checks_days)}
+        return {
+            "health_checks": int(self.retention_health_checks_days),
+            "requests": int(self.retention_requests_days),
+        }
 
     def prune_test_results(
         self, now: Optional[float] = None

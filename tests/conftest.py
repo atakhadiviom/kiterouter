@@ -32,6 +32,7 @@ def _isolate_config(tmp_path, monkeypatch):
     # its path would not help: the sqlite connection is already open against the
     # old file, so writes would still land in the developer's real database.
     monkeypatch.setattr(server, "STORE_FILE", config_dir / "kiterouter.db")
+    monkeypatch.setattr(server, "BODY_DIR", config_dir / "bodies")
     server.store.reopen(config_dir / "kiterouter.db")
 
 

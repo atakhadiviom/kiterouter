@@ -299,6 +299,68 @@
       </div>
     </section>
 
+    <!-- Tab: Logs (durable request history) -->
+    <section id="tab-logs" class="p-8 space-y-6 hidden">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 class="font-semibold text-base text-zinc-100">Request log</h2>
+          <p id="logs-summary" class="text-xs text-muted mt-0.5">Loading…</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <input id="logs-filter-provider" placeholder="provider" oninput="loadLogs(true)"
+                 class="bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500 w-32">
+          <input id="logs-filter-model" placeholder="model" oninput="loadLogs(true)"
+                 class="bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500 w-40">
+          <select id="logs-filter-status" onchange="loadLogs(true)"
+                  class="bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500">
+            <option value="">all statuses</option>
+            <option value="ok">ok</option>
+            <option value="error">error</option>
+          </select>
+          <select id="logs-filter-days" onchange="loadLogs(true)"
+                  class="bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500">
+            <option value="1">last 24h</option>
+            <option value="7" selected>last 7 days</option>
+            <option value="30">last 30 days</option>
+            <option value="">all time</option>
+          </select>
+          <button onclick="loadLogs(true)"
+                  class="px-3 py-1.5 bg-zinc-900 border border-border hover:bg-zinc-800 text-zinc-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
+          </button>
+        </div>
+      </div>
+
+      <div id="logs-stats" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
+
+      <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs font-mono">
+            <thead>
+              <tr class="border-b border-border text-muted uppercase text-[10px] tracking-wider">
+                <th class="pb-3 font-medium">When</th>
+                <th class="pb-3 font-medium">Provider</th>
+                <th class="pb-3 font-medium">Model</th>
+                <th class="pb-3 font-medium">TTFT</th>
+                <th class="pb-3 font-medium">Latency</th>
+                <th class="pb-3 font-medium">In / Out</th>
+                <th class="pb-3 font-medium">Result</th>
+              </tr>
+            </thead>
+            <tbody id="logs-body" class="divide-y divide-border/40 text-zinc-300">
+              <tr><td colspan="7" class="py-6 text-center text-zinc-500 font-sans">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <button onclick="loadLogs(false)" id="btn-logs-more"
+                class="hidden w-full py-2 bg-zinc-900 border border-border hover:bg-zinc-800 text-zinc-300 rounded-lg text-xs transition">
+          Load older
+        </button>
+      </div>
+
+      <div id="log-detail" class="hidden bg-card border border-border rounded-xl p-5 space-y-3"></div>
+    </section>
+
     <!-- Tab: Providers -->
     <section id="tab-providers" class="p-8 space-y-6 hidden">
       <!-- Section Header -->
@@ -1087,10 +1149,7 @@ print(res.choices[0].message.content)</pre>
         reference:'OmniRoute domain_cost_history (12,091 rows), daily_usage_summary, tier_assignments',
         checklist:['capture per-request cost where the upstream reports it','roll up daily','flag free-tier vs paid usage','tests + wiki sync'] },
       { id:'health', label:'Health', icon:'heart-pulse', group:'Observability', status:'live' },
-      { id:'logs', label:'Logs', icon:'scroll-text', group:'Observability', status:'planned',
-        summary:'Full request history with request/response bodies — today there is only a 100-entry ring buffer of 400-character previews.',
-        reference:'OmniRoute call_logs (18,025 rows) with artifact_relpath/sha256, request_detail_logs, log_export_destinations',
-        checklist:['decide the persistence layer first (see plan Wave 0)','store request and response bodies with size caps','search and filter by model, provider and status','tests + wiki sync'] },
+      { id:'logs', label:'Logs', icon:'scroll-text', group:'Observability', status:'live' },
       { id:'provider-stats', label:'Provider Stats', icon:'chart-line', group:'Observability', status:'planned',
         summary:'Per-provider success rate, latency percentiles and error mix over time.',
         reference:'OmniRoute /api/provider-stats and /api/provider-metrics',
@@ -1430,6 +1489,9 @@ print(res.choices[0].message.content)</pre>
       }
       if (tabId === 'health') {
         loadHealthPage();
+      }
+      if (tabId === 'logs') {
+        loadLogs(true);
       }
       if (tabId === 'providers') {
         loadCatalog();
@@ -2802,6 +2864,176 @@ print(res.choices[0].message.content)</pre>
         btn.innerHTML = originalText;
         btn.disabled = false;
         lucide.createIcons();
+      }
+    }
+
+    // ── Logs (durable request history) ─────────────────────────────────────
+    // Real history from SQLite, not the 100-entry ring buffer the overview uses.
+
+    let logsCursor = null;
+    let logsRows = [];
+
+    function renderLogStats(stats) {
+      const el = document.getElementById('logs-stats');
+      if (!el) return;
+      const cards = [
+        { label: 'Requests', value: String(stats?.total ?? 0), note: 'in the selected window' },
+        { label: 'Success rate', value: `${stats?.ok_rate_pct ?? 0}%`, note: `${stats?.failed ?? 0} failed` },
+        { label: 'Avg latency', value: formatMs(stats?.avg_latency_ms), note: 'whole response' },
+        { label: 'Avg TTFT', value: formatMs(stats?.avg_ttft_ms), note: 'time to first token' },
+      ];
+      el.innerHTML = cards.map(c => `
+        <div class="bg-card border border-border p-4 rounded-xl">
+          <div class="text-[10px] font-medium text-muted uppercase tracking-wider">${c.label}</div>
+          <div class="text-xl font-bold mt-1.5 text-zinc-100">${c.value}</div>
+          <div class="text-[11px] text-muted mt-0.5">${escapeHtml(c.note)}</div>
+        </div>`).join('');
+    }
+
+    function renderLogs(rows) {
+      const tbody = document.getElementById('logs-body');
+      if (!tbody) return;
+
+      if (!rows || !rows.length) {
+        tbody.innerHTML = `<tr><td colspan="7" class="py-6 text-center text-zinc-500 font-sans">
+          No requests match. History fills as traffic flows through the gateway.
+        </td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = rows.map(r => {
+        const ok = r.status === 'ok';
+        const tone = ok ? 'bg-emerald-400' : 'bg-rose-400';
+        return `
+          <tr class="hover:bg-zinc-800/60 cursor-pointer transition" onclick="openLog(${r.id})">
+            <td class="py-2.5 text-muted whitespace-nowrap">${formatAgo(r.at)}</td>
+            <td class="py-2.5 text-zinc-300">${escapeHtml(r.provider || 'router')}</td>
+            <td class="py-2.5 text-zinc-200 max-w-[220px] truncate" title="${escapeHtml(r.model || '')}">${escapeHtml(r.model || '')}</td>
+            <td class="py-2.5 text-zinc-400">${formatMs(r.ttft_ms)}</td>
+            <td class="py-2.5 text-zinc-400">${formatMs(r.latency_ms)}</td>
+            <td class="py-2.5 ${ok ? 'text-emerald-400' : 'text-zinc-500'} whitespace-nowrap">${formatK(r.tokens_in)}↑ ${formatK(r.tokens_out)}↓</td>
+            <td class="py-2.5 max-w-[240px] truncate">
+              <span class="inline-flex items-center gap-2">
+                <span class="w-1.5 h-1.5 shrink-0 rounded-full ${tone}"></span>
+                <span class="${ok ? 'text-zinc-300' : 'text-rose-400'}">${escapeHtml((r.error || 'ok').slice(0, 60))}</span>
+              </span>
+            </td>
+          </tr>`;
+      }).join('');
+    }
+
+    async function loadLogs(reset) {
+      if (reset) logsCursor = null;
+      const summaryEl = document.getElementById('logs-summary');
+      const moreBtn = document.getElementById('btn-logs-more');
+
+      const params = new URLSearchParams();
+      const provider = (document.getElementById('logs-filter-provider')?.value || '').trim();
+      const model = (document.getElementById('logs-filter-model')?.value || '').trim();
+      const status = document.getElementById('logs-filter-status')?.value || '';
+      const days = document.getElementById('logs-filter-days')?.value || '';
+      if (provider) params.set('provider', provider);
+      if (model) params.set('model', model);
+      if (status) params.set('status', status);
+      if (days) params.set('days', days);
+      params.set('limit', '50');
+      if (logsCursor) params.set('before_id', logsCursor);
+
+      try {
+        const res = await fetch(`/api/logs?${params.toString()}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        // Keep one accumulated list and render it, rather than patching the DOM.
+        logsRows = reset ? data.requests : [...logsRows, ...data.requests];
+        renderLogStats(data.stats);
+        renderLogs(logsRows);
+
+        logsCursor = data.next_before_id;
+        if (moreBtn) moreBtn.classList.toggle('hidden', !logsCursor);
+        if (summaryEl) {
+          const total = data.stats.total;
+          summaryEl.innerText = `${total} request${total === 1 ? '' : 's'} matched · showing ${logsRows.length}`;
+        }
+      } catch (e) {
+        if (summaryEl) summaryEl.innerHTML = `<span class="text-rose-400">Could not load the request log: ${escapeHtml(String(e.message || e))}</span>`;
+      }
+    }
+
+    function logToCurl(request, body) {
+      const reqBody = body?.request || {};
+      const payload = {
+        model: reqBody.model || request.model,
+        messages: reqBody.messages || [{ role: 'user', content: request.prompt_preview || '' }],
+        stream: reqBody.stream !== undefined ? reqBody.stream : false,
+      };
+      return `curl -s http://127.0.0.1:3001/v1/chat/completions \\\n` +
+             `  -H 'Content-Type: application/json' \\\n` +
+             `  -d '${JSON.stringify(payload).replace(/'/g, "'\\''")}'`;
+    }
+
+    async function openLog(id) {
+      const el = document.getElementById('log-detail');
+      if (!el) return;
+      el.classList.remove('hidden');
+      el.innerHTML = '<div class="text-xs text-muted font-mono">Loading…</div>';
+      try {
+        const res = await fetch(`/api/logs/${id}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const r = data.request;
+        const curl = logToCurl(r, data.body);
+
+        el.innerHTML = `
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-200">Request ${r.id}</h3>
+              <p class="text-[11px] text-muted font-mono mt-0.5">
+                ${escapeHtml(r.provider || '')} · ${escapeHtml(r.model || '')}
+                ${r.combo ? ` · combo ${escapeHtml(r.combo)}` : ''}
+                ${r.session_key ? ` · session ${escapeHtml(r.session_key)}` : ''}
+                · ${new Date(r.at * 1000).toLocaleString()}
+              </p>
+            </div>
+            <button onclick="document.getElementById('log-detail').classList.add('hidden')" class="text-muted hover:text-zinc-200 text-xs">close</button>
+          </div>
+
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
+            <div><div class="text-muted text-[10px] uppercase">Status</div><div class="${r.status === 'ok' ? 'text-emerald-400' : 'text-rose-400'}">${escapeHtml(r.status)}</div></div>
+            <div><div class="text-muted text-[10px] uppercase">Latency</div><div class="text-zinc-300">${formatMs(r.latency_ms)}</div></div>
+            <div><div class="text-muted text-[10px] uppercase">TTFT</div><div class="text-zinc-300">${formatMs(r.ttft_ms)}</div></div>
+            <div><div class="text-muted text-[10px] uppercase">RTK saved</div><div class="text-zinc-300">${r.rtk_saved || 0} tokens</div></div>
+          </div>
+
+          ${r.error ? `<div class="text-[11px] font-mono text-rose-400 bg-rose-950/30 border border-rose-500/20 rounded-lg p-3">${escapeHtml(r.error)}</div>` : ''}
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div class="bg-zinc-900/70 border border-border rounded-lg p-3">
+              <div class="text-[10px] uppercase text-muted mb-1">Prompt</div>
+              <div class="text-[11px] font-mono text-zinc-300 whitespace-pre-wrap max-h-40 overflow-y-auto">${escapeHtml(r.prompt_preview || '—')}</div>
+            </div>
+            <div class="bg-zinc-900/70 border border-border rounded-lg p-3">
+              <div class="text-[10px] uppercase text-muted mb-1">Response</div>
+              <div class="text-[11px] font-mono text-zinc-300 whitespace-pre-wrap max-h-40 overflow-y-auto">${escapeHtml(r.response_preview || '—')}</div>
+            </div>
+          </div>
+
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <div class="text-[10px] uppercase text-muted">Full body</div>
+              <div class="text-[10px] ${data.body_expired ? 'text-amber-400' : 'text-muted'} font-mono">
+                ${data.body_expired ? 'expired — bodies are kept for 3 days' : 'replay this request'}
+              </div>
+            </div>
+            <pre id="log-curl" class="text-[11px] font-mono text-zinc-300 bg-zinc-900/70 border border-border rounded-lg p-3 max-h-56 overflow-auto whitespace-pre-wrap">${escapeHtml(curl)}</pre>
+            <button onclick="copyText(this, document.getElementById('log-curl').innerText)"
+                    class="mt-2 px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition">Copy as cURL</button>
+            ${data.body ? `<details class="mt-2"><summary class="text-[11px] text-muted cursor-pointer">body JSON</summary>
+              <pre class="text-[11px] font-mono text-zinc-400 bg-zinc-900/70 border border-border rounded-lg p-3 max-h-64 overflow-auto whitespace-pre-wrap mt-1">${escapeHtml(JSON.stringify(data.body, null, 2).slice(0, 4000))}</pre></details>` : ''}
+          </div>`;
+        if (window.lucide) lucide.createIcons();
+      } catch (e) {
+        el.innerHTML = `<div class="text-xs text-rose-400 font-mono">Could not load request ${id}: ${escapeHtml(String(e.message || e))}</div>`;
       }
     }
 

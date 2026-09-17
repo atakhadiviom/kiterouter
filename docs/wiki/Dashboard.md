@@ -14,9 +14,11 @@ The left rail carries every feature KiteRouter intends to have, not just the one
 
 ### Opening a planned feature
 
-Planned entries open a **plan + status panel** stating plainly that it is not implemented, then showing what it will do, the OmniRoute behaviour it is based on, and its definition of done as a checklist. Panels are created on first visit rather than shipping 51 empty sections.
+Planned entries open a **plan + status panel** stating plainly that it is not implemented, then showing what it will do, the OmniRoute behaviour it is based on, and its definition of done as a checklist. Panels are created on first visit rather than shipping 50 empty sections.
 
-### Built today (6)
+### Built today (7)
+
+0b. **Logs** — durable request history from SQLite, not the 100-entry ring buffer the overview uses. Filter by provider, model, status and window (24h / 7d / 30d / all); the header shows matched, success rate, **average latency and average TTFT**. Clicking a row opens its detail: timings, RTK tokens saved, the upstream error verbatim, prompt and response, and a **Copy as cURL** replay built from the stored body. When a body has passed its shorter retention the drawer says so — `expired — bodies are kept for 3 days` — instead of failing. `Load older` pages with a cursor, so rows arriving mid-page cannot cause a skip or a repeat.
 
 0. **Health** — per-connection probe history, backed by SQLite. A **Per connection** table shows last-probe age, OK rate, latency as min / avg / max, average TTFT, and the last result — with a `needs action` badge when a failure is terminal (a revoked or expired credential) rather than transient. Below it, the newest probes with their TTFT, and four cards for the database: size, **WAL size**, probes stored and retention, and when the last vacuum ran. A large WAL is called out explicitly. **Probe now** runs a sweep, which is the same action as the Providers tab.
 1. **Provider Topology + Recent Requests (Overview)**
@@ -36,9 +38,9 @@ Planned entries open a **plan + status panel** stating plainly that it is not im
 4. **Connect Tools** — copyable drop-in setup guides and configurations for Cursor IDE, Claude Code CLI, Cline & Roo Code, OpenCode CLI, Continue.dev, Aider CLI, and Python OpenAI SDK.
 5. **Playground** — model picker populated from imported/fetched models (including all defined combos and smart `auto`) with a provider filter; value is sent verbatim (prefix intact); output streams live and upstream errors render as errors.
 
-### Planned (51)
+### Planned (50)
 
-Auto-Combo, Routing, Conductor, Resilience, Limits, Quota, Endpoint, API Endpoints, Analytics, Activity, Audit, Costs, Logs, Provider Stats, Runtime, System, Tokens, Usage, Cache, Compression, Context, Conversations, Memory, Translator, Discovery, Free Tiers, Free Rankings, Media Providers, API Manager, A2A Protocol, ACP Agents, Agent Skills, CLI Agents, CLI Code, Cloud Agents, MCP Server, Omni Skills, Search Tools, Tools, Batch, Changelog, Chaos, Gamification, Leaderboard, Onboarding, Plugins, Profile, Radar, Relay, Settings, Webhooks.
+Auto-Combo, Routing, Conductor, Resilience, Limits, Quota, Endpoint, API Endpoints, Analytics, Activity, Audit, Costs, Provider Stats, Runtime, System, Tokens, Usage, Cache, Compression, Context, Conversations, Memory, Translator, Discovery, Free Tiers, Free Rankings, Media Providers, API Manager, A2A Protocol, ACP Agents, Agent Skills, CLI Agents, CLI Code, Cloud Agents, MCP Server, Omni Skills, Search Tools, Tools, Batch, Changelog, Chaos, Gamification, Leaderboard, Onboarding, Plugins, Profile, Radar, Relay, Settings, Webhooks.
 
 The build order, the measured reasoning behind it, and the retention decisions are recorded in the plan at `~/.commandcode/plans/kiterouter-apply-measured-needs.md`.
 

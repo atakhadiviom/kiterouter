@@ -15,8 +15,10 @@ Config lives at `~/.kiterouter/config.json` and is editable from the dashboard (
 | `prober_timeout_seconds` | `90` | Per-probe timeout. Some providers are genuinely slow (Cursor's `auto` averages 56s), so this is a knob rather than a constant |
 | `prober` | `{}` | Prober state (last sweep, per-connection results). Optional `prober.models` overrides which models are probed, e.g. `{"models": {"cline": ["cline-free/solar-pro4"]}}` |
 | `retention_health_checks_days` | `30` | Probe history kept in `kiterouter.db` |
-| `retention_requests_days` | `30` | Request log retention (used from Wave 3) |
-| `retention_bodies_days` | `3` | Request/response artifact retention (used from Wave 3) |
+| `retention_requests_days` | `30` | Request rows kept in `kiterouter.db` (enforced) |
+| `retention_bodies_days` | `3` | Request/response body files kept on disk. The disk-heavy part, so they expire well before their rows |
+| `save_bodies` | `true` | Whether to write body artifacts at all. Off means previews only |
+| `max_body_bytes` | `200000` | Cap per body file; larger bodies are truncated with a marker |
 | `retention_usage_days` | `365` | Usage and quota rollups (used from Waves 2 and 4) |
 | `store_maintenance_seconds` | `900` | How often prune + WAL checkpoint (+ weekly vacuum) runs |
 | `retention_test_results_days` | `30` | Per-model results kept **in config.json**, which is rewritten wholesale on save. The full history is in the store |
