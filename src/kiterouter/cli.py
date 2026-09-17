@@ -8,6 +8,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
+
 import httpx
 
 from kiterouter.config import CONFIG_DIR, KiteConfig
@@ -17,6 +19,7 @@ REPO_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 def get_running_pid() -> int | None:
+    """PID recorded in the PID file, if something is alive there."""
     if PID_FILE.exists():
         try:
             pid = int(PID_FILE.read_text().strip())
@@ -25,6 +28,34 @@ def get_running_pid() -> int | None:
         except (ValueError, OSError):
             PID_FILE.unlink(missing_ok=True)
     return None
+
+
+def pid_command(pid: int) -> Optional[str]:
+    """Command line for a PID, or None when it cannot be read."""
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def is_kiterouter_process(pid: int) -> bool:
+    """True only when this PID really is the gateway.
+
+    A bare liveness check (``os.kill(pid, 0)``) proves *something* is alive at
+    that PID, not what it is. If KiteRouter died and the PID was recycled, an
+    unverified stop would SIGTERM whatever inherited it — and OmniRoute runs on
+    this machine, so that could take the neighbour down.
+    """
+    command = pid_command(pid)
+    return bool(command) and "kiterouter" in command.lower()
 
 
 def cmd_start(args: argparse.Namespace) -> None:
@@ -73,6 +104,14 @@ def cmd_stop(args: argparse.Namespace) -> None:
         print("KiteRouter is not running.")
         return
 
+    if not is_kiterouter_process(pid):
+        command = pid_command(pid) or "unknown (could not read its command line)"
+        print(f"⚠️  Refusing to stop PID {pid}: that process is not KiteRouter.")
+        print(f"    Found: {command}")
+        print("    Nothing was signalled. If KiteRouter really did die, remove the")
+        print(f"    stale PID file yourself: {PID_FILE}")
+        return
+
     print(f"Stopping KiteRouter (PID {pid})...")
     try:
         os.kill(pid, signal.SIGTERM)
@@ -87,6 +126,13 @@ def cmd_status(args: argparse.Namespace) -> None:
     pid = get_running_pid()
     if not pid:
         print("Status: ⭕ Stopped")
+        return
+
+    if not is_kiterouter_process(pid):
+        command = pid_command(pid) or "unknown (could not read its command line)"
+        print(f"Status: ⚠️  PID {pid} is alive but is not KiteRouter — stale PID file.")
+        print(f"Found: {command}")
+        print(f"Remove it with: rm {PID_FILE}")
         return
 
     config = KiteConfig.load()
