@@ -20,6 +20,7 @@ import httpx
 
 from kiterouter.config import persist_provider_tokens
 from kiterouter.providers.base import BaseProvider, create_sse_chunk
+from kiterouter.providers.streaming import UpstreamStalled, iter_upstream_lines
 from kiterouter.token_fetcher import TokenFetcher, normalize_expires_at
 
 logger = logging.getLogger(__name__)
@@ -427,7 +428,7 @@ class ClineProvider(BaseProvider):
                         )
                         yield "data: [DONE]\n\n"
                         return
-                    async for line in resp.aiter_lines():
+                    async for line in iter_upstream_lines(resp):
                         if line.strip():
                             yield f"{line}\n\n"
         except Exception as e:

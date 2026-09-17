@@ -5,6 +5,7 @@ import os
 from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from kiterouter.providers.base import BaseProvider, create_sse_chunk
+from kiterouter.providers.streaming import UpstreamStalled, iter_upstream_lines
 
 
 class KiroProvider(BaseProvider):
@@ -88,7 +89,7 @@ class KiroProvider(BaseProvider):
                         yield "data: [DONE]\n\n"
                         return
 
-                    async for line in resp.aiter_lines():
+                    async for line in iter_upstream_lines(resp):
                         if line:
                             yield f"{line}\n\n"
         except Exception as e:

@@ -237,12 +237,15 @@ def test_parse_models_payload_tolerates_every_shape(payload, expected):
 # ── streaming, end to end through the node ───────────────────────────────────
 
 class FakeStream:
-    def __init__(self, lines, status_code=200):
+    def __init__(self, lines, status_code=200, delay=0.0):
         self._lines = lines
         self.status_code = status_code
+        self._delay = delay
 
     async def aiter_lines(self):
         for line in self._lines:
+            if self._delay:
+                await asyncio.sleep(self._delay)
             yield line
 
     async def aread(self):
@@ -343,6 +346,36 @@ def test_a_node_without_base_url_explains_itself_instead_of_crashing():
     node = NodeProvider("n", {"api_key": "k"})
     chunks = collect(node)
     assert "no base_url" in "".join(chunks)
+
+
+def test_a_stalled_upstream_is_reported_not_awaited_forever(monkeypatch):
+    """A node whose upstream only sends keep-alives must end, not hang."""
+    node = NodeProvider("n", {"api_type": "anthropic", "base_url": "https://api.x.com/v1", "api_key": "k"})
+    # Keep-alives must arrive spread over time, as they would in reality.
+    client = FakeClient(FakeStream([": keep-alive"] * 50, delay=0.02))
+
+    async def _run():
+        out = []
+        async for chunk in node.stream_chat(model="m", messages=[{"role": "user", "content": "hi"}]):
+            out.append(chunk)
+        return out
+
+    monkeypatch.setattr("httpx.AsyncClient", lambda **kwargs: client)
+    # Patch the name the node module actually resolved, not the defining module.
+    with patch("kiterouter.providers.node.iter_upstream_lines", _stalling):
+        chunks = asyncio.run(_run())
+
+    joined = "".join(chunks)
+    assert "keep-alives" in joined, joined
+    assert joined.rstrip().endswith("data: [DONE]"), "a stalled stream must still terminate"
+
+
+async def _stalling(response, **kwargs):
+    """iter_upstream_lines with test-sized timeouts."""
+    from kiterouter.providers.streaming import iter_upstream_lines as real
+
+    async for line in real(response, first_content_timeout=0.05, idle_timeout=5):
+        yield line
 
 
 def test_describe_leaks_no_secret():

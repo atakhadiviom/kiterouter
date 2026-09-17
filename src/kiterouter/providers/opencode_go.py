@@ -9,6 +9,7 @@ import uuid
 from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from kiterouter.providers.base import BaseProvider, create_sse_chunk
+from kiterouter.providers.streaming import UpstreamStalled, iter_upstream_lines
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +159,7 @@ class OpenCodeGoProvider(BaseProvider):
                         yield "data: [DONE]\n\n"
                         return
 
-                    async for line in resp.aiter_lines():
+                    async for line in iter_upstream_lines(resp):
                         if line:
                             yield f"{line}\n\n"
         except Exception as e:
@@ -222,7 +223,7 @@ class OpenCodeGoProvider(BaseProvider):
                         yield "data: [DONE]\n\n"
                         return
 
-                    async for raw_line in resp.aiter_lines():
+                    async for raw_line in iter_upstream_lines(resp):
                         if not raw_line:
                             continue
                         line = raw_line.strip()

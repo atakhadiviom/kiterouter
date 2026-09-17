@@ -21,6 +21,7 @@ from kiterouter.config import KiteConfig
 from kiterouter.live_health import LiveHealth
 from kiterouter.prober import HealthProber, probe_stream
 from kiterouter.providers.node import NodeProvider
+from kiterouter.providers.translate import extract_delta_text
 from kiterouter.router import ProviderRouter
 from kiterouter.store import Store
 from kiterouter.token_fetcher import TokenFetcher, normalize_expires_at
@@ -1350,8 +1351,12 @@ async def chat_completions(req: ChatCompletionRequest):
                     try:
                         payload = json.loads(chunk[6:].strip())
                         delta = payload.get("choices", [{}])[0].get("delta", {})
-                        if "content" in delta and delta["content"]:
-                            full_text.append(delta["content"])
+                        # Shared with the streaming path and the prober: models that
+                        # answer in reasoning_content would otherwise aggregate to
+                        # empty text for non-streaming clients.
+                        text = extract_delta_text(delta)
+                        if text:
+                            full_text.append(text)
                     except Exception:
                         continue
         except Exception as e:

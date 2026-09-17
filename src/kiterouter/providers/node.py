@@ -20,6 +20,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 
 from kiterouter.providers.base import BaseProvider, create_sse_chunk
+from kiterouter.providers.streaming import UpstreamStalled, iter_upstream_lines
 from kiterouter.providers.translate import (
     anthropic_headers,
     build_anthropic_request,
@@ -248,7 +249,7 @@ class NodeProvider(BaseProvider):
                         return
 
                     if self.api_type == "openai-compatible":
-                        async for line in response.aiter_lines():
+                        async for line in iter_upstream_lines(response):
                             if line.strip():
                                 yield f"{line}\n\n"
                         return
@@ -271,7 +272,7 @@ class NodeProvider(BaseProvider):
         }[self.api_type]
 
         finished = False
-        async for line in response.aiter_lines():
+        async for line in iter_upstream_lines(response):
             event = parse_sse_data(line)
             if event is None:
                 if line.strip() == "data: [DONE]":

@@ -8,6 +8,7 @@ import uuid
 from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from kiterouter.providers.base import BaseProvider, create_sse_chunk
+from kiterouter.providers.streaming import UpstreamStalled, iter_upstream_lines
 
 logger = logging.getLogger(__name__)
 
@@ -133,9 +134,17 @@ class OpenCodeFreeProvider(BaseProvider):
                         yield "data: [DONE]\n\n"
                         return
 
-                    async for line in resp.aiter_lines():
+                    async for line in iter_upstream_lines(resp):
                         if line:
                             yield f"{line}\n\n"
+        except UpstreamStalled as stalled:
+            # This upstream is known to hold the connection open with keep-alives.
+            # Say so rather than letting the client wait forever.
+            yield create_sse_chunk(
+                f"OpenCode Free stalled: {stalled}", model=model
+            )
+            yield create_sse_chunk(finish_reason="stop", model=model)
+            yield "data: [DONE]\n\n"
         except Exception as e:
             yield create_sse_chunk(
                 f"[OpenCode Free connection notice: {e}]", model=model
@@ -199,7 +208,7 @@ class OpenCodeFreeProvider(BaseProvider):
                         yield "data: [DONE]\n\n"
                         return
 
-                    async for raw_line in resp.aiter_lines():
+                    async for raw_line in iter_upstream_lines(resp):
                         if not raw_line:
                             continue
                         line = raw_line.strip()
