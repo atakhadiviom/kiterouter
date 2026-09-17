@@ -19,6 +19,21 @@
 | `custom` | — | any | OpenAI-compatible base URL |
 | `command_code` | `cmd` | API key | `commandcode.ai` Claude/GPT models |
 
+## Model catalogs (discovered, with provenance)
+
+Provider model lists change constantly, so they are **discovered and stored** rather than hardcoded. Catalogs live in `kiterouter.db`, not `config.json` — config is rewritten wholesale on every save, and accumulating hundreds of model entries there made every save slower and the file larger (205 KB at its worst).
+
+Every entry carries a **source**:
+
+- **`manual`** — a model pinned in config. **Never** removed or reclassified by a sync; absent upstream does not mean the operator was wrong.
+- **`discovery`** — an observation. It expires once the provider stops listing it (`catalog_unseen_days`, default 14).
+
+Refreshed daily (`catalog_refresh_hours`, default 24) and on demand from the dashboard or `POST /api/models/refresh`. **A sync shows up on the next request, not the next restart** — the router reads the catalog through a live accessor, so `/v1/models` grows as soon as the catalog does. Observed here: 107 → 676 models while the process kept running.
+
+Freshness is surfaced per provider ("synced 3h ago", or "never synced") because a stale catalog otherwise shows up later as a confusing 400 from a chat endpoint rather than as an obviously old list.
+
+Config is kept bounded in exchange: per-model results older than `retention_test_results_days` (30) are dropped and each provider is capped at `max_test_results_per_provider` (60), applied whenever results are written. The full history lives in the store, so nothing is lost — trimming the config took it from **205 KB to 100 KB**.
+
 ## Provider nodes (providers as data)
 
 Most providers change constantly — a new model id, a renamed path, a different host. KiteRouter therefore lets a provider be **described**, not compiled. An entry with `kind: "node"` is driven entirely by config:

@@ -150,6 +150,22 @@ Restores providers, combos, and gateway settings from a JSON payload.
 
 `provider_health` is passive: every logged request records `{status, model, latency_ms, at, error?}` for its provider. The dashboard prefers it over a recorded test whenever it is fresher, so the topology reflects reality between test runs. It is kept in memory with a throttled write to `~/.kiterouter/live_health.json` — deliberately not the main config, which is large and rewritten wholesale.
 
+## Model catalogs
+
+### `GET /api/models/catalog`
+
+Discovered catalogs with provenance and freshness: per provider `models`, `manual` count, `synced_at`, `synced_ago_seconds`, plus the full `models` map, `total_models`, the refresh cadence and unseen-expiry, and — so the bound is visible — `config_kb` and `test_results_kept`.
+
+### `POST /api/models/refresh`
+
+```json
+{ "provider": "groq" }   // omit to refresh every available provider
+```
+
+Fetches each provider's catalog and persists it, then pins models listed in config as `manual` and expires discoveries the providers stopped listing. Providers are refreshed **sequentially**, so this never looks like a burst. Returns `providers`, `refreshed`, `failed`, `expired` and a per-provider `results` map.
+
+An empty catalog response is treated as a **failure**, not as evidence the models are gone — otherwise one bad response would wipe a working catalog.
+
 ## Provider nodes
 
 ### `GET /api/providers/nodes`

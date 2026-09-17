@@ -92,7 +92,7 @@ vm.runInContext(
   'setRailCollapsed, toggleRail, storedRailCollapsed, railIsCollapsed, RAIL_STORAGE_KEY, ' +
   'renderTopology, renderTopologyGraph, topoZoom, topoFit, topoStatusOf, topoEdgePath, ' +
   'initTopologyInteractions, TOPO, renderHealthStats, renderHealthConnections, ' +
-  'renderHealthRecent, formatMs, formatBytes, nodeSettingsHtml, NODE_API_TYPES };',
+  'renderHealthRecent, formatMs, formatBytes, nodeSettingsHtml, NODE_API_TYPES, renderCatalog };',
   ctx
 );
 const t = ctx.__t;
@@ -376,6 +376,39 @@ check(!/NaN/.test(recentHtml), 'no NaN in the recent list');
 
 t.renderHealthRecent([]);
 check(/Nothing probed yet/.test(healthRecent._innerHTML), 'empty recent list should explain itself');
+
+// ── model catalogs ────────────────────────────────────────────────────────
+const catalogSummary = reg('catalog-summary', 'p');
+const catalogList = reg('catalog-list');
+
+t.renderCatalog({
+  providers: {
+    groq: { models: 12, manual: 2, synced_at: Math.floor(Date.now() / 1000) - 3600 },
+    openrouter: { models: 400, manual: 0, synced_at: Math.floor(Date.now() / 1000) - 60 },
+    stale: { models: 3, manual: 0, synced_at: null },
+  },
+  total_models: 415,
+  refresh_hours: 24,
+  config_kb: 205,
+  test_results_kept: 286,
+});
+
+const catalogHtml = catalogList._innerHTML;
+const catalogText = catalogSummary.innerText || '';
+
+check(/415 models across 3 providers/.test(catalogText), `summary: ${catalogText}`);
+check(/refreshes every 24h/.test(catalogText), 'the refresh cadence should be visible');
+check(/config 205 KB/.test(catalogText), 'config size should be visible');
+check(/286 results kept/.test(catalogText), 'the config bound should be visible');
+check(/never synced/.test(catalogHtml), 'a catalog that never synced must say so');
+check(/2 pinned/.test(catalogHtml), 'pinned models should be distinguished from discovered ones');
+check(/1h ago/.test(catalogHtml), 'freshness should be humanised');
+// busiest provider first
+check(catalogHtml.indexOf('openrouter') < catalogHtml.indexOf('groq'), 'catalogs should sort by size');
+
+t.renderCatalog({ providers: {}, total_models: 0 });
+check(/No catalogs yet/.test(catalogSummary.innerText || ''), 'an empty catalog set should explain itself');
+check(/Nothing discovered yet/.test(catalogList._innerHTML), 'empty list should explain itself');
 
 // ── declarative provider nodes ────────────────────────────────────────────
 check(t.NODE_API_TYPES.length === 4, 'four wire formats should be offered');

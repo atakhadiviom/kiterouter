@@ -415,6 +415,9 @@ class HealthProber:
             "summary": summary,
         }
         try:
+            # Probes also write per-model results into config; keep it bounded.
+            if hasattr(config, "prune_test_results"):
+                config.prune_test_results()
             config.set_prober_state(state)
         except Exception as e:
             logger.debug("Could not persist prober state: %s", e)

@@ -19,6 +19,10 @@ Config lives at `~/.kiterouter/config.json` and is editable from the dashboard (
 | `retention_bodies_days` | `3` | Request/response artifact retention (used from Wave 3) |
 | `retention_usage_days` | `365` | Usage and quota rollups (used from Waves 2 and 4) |
 | `store_maintenance_seconds` | `900` | How often prune + WAL checkpoint (+ weekly vacuum) runs |
+| `retention_test_results_days` | `30` | Per-model results kept **in config.json**, which is rewritten wholesale on save. The full history is in the store |
+| `max_test_results_per_provider` | `60` | Hard cap per provider, applied as a backstop when results are written |
+| `catalog_refresh_hours` | `24` | How often provider model catalogs are re-discovered |
+| `catalog_unseen_days` | `14` | A discovered model unseen for this long is expired. **`manual` entries are exempt** |
 | `providers` | `{}` | Per-provider credential blocks (below) |
 | `combos` | `{}` | Named multi-model routing chains with strategy and candidate models |
 

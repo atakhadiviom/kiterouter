@@ -19,12 +19,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger("kiterouter.store")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # (version, [statements]) — applied in order, once each, tracked by user_version.
 MIGRATIONS: Sequence[Tuple[int, Sequence[str]]] = (
     (
-        SCHEMA_VERSION,
+        1,
         (
             """
             CREATE TABLE IF NOT EXISTS health_checks (
@@ -47,6 +47,27 @@ MIGRATIONS: Sequence[Tuple[int, Sequence[str]]] = (
                 value TEXT
             )
             """,
+        ),
+    ),
+    (
+        2,
+        (
+            # Model catalogs live here rather than in config.json, which is
+            # rewritten wholesale on every save and had already reached 205 KB
+            # of accumulated test results.
+            """
+            CREATE TABLE IF NOT EXISTS models (
+                provider      TEXT    NOT NULL,
+                model_id      TEXT    NOT NULL,
+                source        TEXT    NOT NULL DEFAULT 'discovery',
+                first_seen_at INTEGER NOT NULL,
+                last_seen_at  INTEGER NOT NULL,
+                synced_at     INTEGER,
+                PRIMARY KEY (provider, model_id)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_models_provider ON models(provider)",
+            "CREATE INDEX IF NOT EXISTS idx_models_last_seen ON models(last_seen_at)",
         ),
     ),
 )
@@ -197,7 +218,110 @@ class Store:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    # ----------------------------------------------------------- maintenance
+    # ---------------------------------------------------------------- models
+
+    def record_models(
+        self,
+        provider: str,
+        model_ids: Sequence[str],
+        source: str = "discovery",
+        now: Optional[int] = None,
+    ) -> int:
+        """Upsert a provider's discovered catalog.
+
+        A model already known as `manual` keeps that source: discovery must never
+        silently reclassify something the operator pinned.
+        """
+        moment = int(now if now is not None else time.time())
+        written = 0
+        with self._lock:
+            for model_id in model_ids:
+                if not model_id:
+                    continue
+                self._conn.execute(
+                    """
+                    INSERT INTO models (provider, model_id, source, first_seen_at, last_seen_at, synced_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(provider, model_id) DO UPDATE SET
+                        last_seen_at = excluded.last_seen_at,
+                        synced_at    = excluded.synced_at,
+                        source       = CASE WHEN models.source = 'manual'
+                                            THEN 'manual' ELSE excluded.source END
+                    """,
+                    (provider, str(model_id), source, moment, moment, moment),
+                )
+                written += 1
+            self._conn.commit()
+        return written
+
+    def record_manual_model(self, provider: str, model_id: str, now: Optional[int] = None) -> None:
+        """Pin a model so discovery will not remove or reclassify it."""
+        moment = int(now if now is not None else time.time())
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO models (provider, model_id, source, first_seen_at, last_seen_at, synced_at)
+                VALUES (?, ?, 'manual', ?, ?, NULL)
+                ON CONFLICT(provider, model_id) DO UPDATE SET source = 'manual'
+                """,
+                (provider, str(model_id), moment, moment),
+            )
+            self._conn.commit()
+
+    def models_for(self, provider: str) -> List[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT model_id FROM models WHERE provider = ? ORDER BY model_id",
+                (provider,),
+            ).fetchall()
+        return [r["model_id"] for r in rows]
+
+    def all_models(self) -> Dict[str, List[str]]:
+        """Every catalogued model, grouped by provider."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT provider, model_id FROM models ORDER BY provider, model_id"
+            ).fetchall()
+        grouped: Dict[str, List[str]] = {}
+        for row in rows:
+            grouped.setdefault(row["provider"], []).append(row["model_id"])
+        return grouped
+
+    def catalog_freshness(self) -> Dict[str, Dict[str, Any]]:
+        """Per provider: how many models, and when the catalog last synced."""
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT provider,
+                       COUNT(*)          AS models,
+                       MAX(synced_at)    AS synced_at,
+                       MAX(last_seen_at) AS last_seen_at,
+                       SUM(CASE WHEN source = 'manual' THEN 1 ELSE 0 END) AS manual
+                FROM models GROUP BY provider ORDER BY provider
+                """
+            ).fetchall()
+        return {r["provider"]: dict(r) for r in rows}
+
+    def expire_models(self, unseen_days: int, now: Optional[int] = None) -> int:
+        """Drop discovered models not seen for a while.
+
+        Manual entries are exempt: they are operator intent, not observation, so
+        an absent model upstream does not mean the operator was wrong.
+        """
+        if not unseen_days:
+            return 0
+        moment = int(now if now is not None else time.time())
+        cutoff = moment - int(unseen_days) * 86400
+        with self._lock:
+            cursor = self._conn.execute(
+                "DELETE FROM models WHERE source != 'manual' AND last_seen_at < ?",
+                (cutoff,),
+            )
+            removed = max(0, cursor.rowcount or 0)
+            self._conn.commit()
+        return removed
+
+    # ------------------------------------------------------------- maintenance
 
     def prune(self, retention_days: Dict[str, int], now: Optional[int] = None) -> int:
         """Delete rows past their retention window; returns the row count removed."""

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -29,6 +30,13 @@ class KiteConfig:
     retention_bodies_days: int = 3
     retention_usage_days: int = 365
     store_maintenance_seconds: int = 900
+    # test_results live in config.json, which is rewritten wholesale on every
+    # save — so they are bounded rather than accumulated forever. Full history
+    # belongs in the store.
+    retention_test_results_days: int = 30
+    max_test_results_per_provider: int = 60
+    catalog_refresh_hours: int = 24
+    catalog_unseen_days: int = 14
     providers: Dict[str, Any] = field(default_factory=lambda: {
         "cursor": {"enabled": True, "token": "", "machine_id": ""},
         "antigravity": {"enabled": True, "token": "", "project_id": ""},
@@ -93,6 +101,10 @@ class KiteConfig:
                 retention_bodies_days=data.get("retention_bodies_days", 3),
                 retention_usage_days=data.get("retention_usage_days", 365),
                 store_maintenance_seconds=data.get("store_maintenance_seconds", 900),
+                retention_test_results_days=data.get("retention_test_results_days", 30),
+                max_test_results_per_provider=data.get("max_test_results_per_provider", 60),
+                catalog_refresh_hours=data.get("catalog_refresh_hours", 24),
+                catalog_unseen_days=data.get("catalog_unseen_days", 14),
                 providers=merged_providers,
                 combos=saved_combos if isinstance(saved_combos, dict) else {},
             )
@@ -137,6 +149,49 @@ class KiteConfig:
     def retention_days(self) -> Dict[str, int]:
         """Retention per stored table — only tables that actually exist."""
         return {"health_checks": int(self.retention_health_checks_days)}
+
+    def prune_test_results(
+        self, now: Optional[float] = None
+    ) -> int:
+        """Bound the per-model results kept in config.
+
+        Config is rewritten wholesale on every save, so accumulated results make
+        every save slower and the file larger. Results older than the retention
+        window are dropped, and each provider is capped as a backstop. The full
+        history lives in the store, so nothing is actually lost.
+        """
+        moment = float(now if now is not None else time.time())
+        cutoff = moment - int(self.retention_test_results_days) * 86400
+        removed = 0
+
+        for provider, conf in (self.providers or {}).items():
+            if not isinstance(conf, dict):
+                continue
+            results = conf.get("test_results")
+            if not isinstance(results, dict) or not results:
+                continue
+
+            kept = {
+                model: entry
+                for model, entry in results.items()
+                if isinstance(entry, dict) and (entry.get("tested_at") or 0) >= cutoff
+            }
+            removed += len(results) - len(kept)
+
+            cap = int(self.max_test_results_per_provider)
+            if cap and len(kept) > cap:
+                newest = sorted(
+                    kept.items(), key=lambda kv: kv[1].get("tested_at") or 0, reverse=True
+                )[:cap]
+                removed += len(kept) - len(newest)
+                kept = dict(newest)
+
+            if kept:
+                conf["test_results"] = kept
+            elif "test_results" in conf:
+                conf["test_results"] = {}
+
+        return removed
 
 
 def persist_provider_tokens(provider: str, updates: Dict[str, Any]) -> None:

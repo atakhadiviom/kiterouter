@@ -15,7 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from kiterouter import cline_auth, updater
+from kiterouter import catalog, cline_auth, updater
 from kiterouter.compressor import compress_messages
 from kiterouter.config import KiteConfig
 from kiterouter.live_health import LiveHealth
@@ -45,6 +45,23 @@ async def _store_maintenance_loop() -> None:
             logger.debug("Store maintenance failed: %s", e)
 
 
+async def _catalog_refresh_loop() -> None:
+    """Refresh model catalogs on a schedule — provider lists change constantly.
+
+    Sleeps first so startup is never delayed by network work.
+    """
+    while True:
+        await asyncio.sleep(max(900, int(config.catalog_refresh_hours) * 3600))
+        try:
+            result = await catalog.sync_all(router, store)
+            logger.info(
+                "Catalog refresh: %s/%s providers", result.get("refreshed"), result.get("providers")
+            )
+            store.expire_models(config.catalog_unseen_days)
+        except Exception as e:
+            logger.debug("Catalog refresh failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     if config.enable_prober:
@@ -52,14 +69,17 @@ async def lifespan(_app: FastAPI):
         prober.delay_seconds = config.prober_delay_seconds
         prober.start()
     maintenance = asyncio.create_task(_store_maintenance_loop())
+    catalogs = asyncio.create_task(_catalog_refresh_loop())
     try:
         yield
     finally:
         maintenance.cancel()
-        try:
-            await maintenance
-        except (asyncio.CancelledError, Exception):
-            pass
+        catalogs.cancel()
+        for task in (maintenance, catalogs):
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
         await prober.stop()
         live_health.flush(force=True)
         await asyncio.to_thread(store.close)
@@ -68,7 +88,6 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="KiteRouter", version="0.1.0", lifespan=lifespan)
 
 config = KiteConfig.load()
-router = ProviderRouter(config=config)
 STATIC_DIR = Path(__file__).parent / "static"
 CONFIG_DIR = Path.home() / ".kiterouter"
 REQUEST_LOG_FILE = CONFIG_DIR / "request_log.json"
@@ -77,6 +96,42 @@ STORE_FILE = CONFIG_DIR / "kiterouter.db"
 _recent_requests: List[Dict[str, Any]] = []
 live_health = LiveHealth(LIVE_HEALTH_FILE)
 store = Store(STORE_FILE)
+
+
+def build_router() -> ProviderRouter:
+    """Construct a router with the discovered catalog wired in.
+
+    Every rebuild goes through here: a router without its catalog would hide
+    freshly synced models until the next restart.
+    """
+    instance = ProviderRouter(config=config)
+    instance.set_catalog(store.all_models)
+    return instance
+
+
+router = build_router()
+
+
+def _config_size_bytes() -> int:
+    try:
+        from kiterouter.config import CONFIG_FILE
+
+        return CONFIG_FILE.stat().st_size if CONFIG_FILE.exists() else 0
+    except Exception:
+        return 0
+
+
+def _test_results_count() -> int:
+    """How many per-model results config is still carrying.
+
+    Surfaced so the bound is visible: config is rewritten wholesale on every
+    save, so this number is what makes saves slow when it grows.
+    """
+    total = 0
+    for conf in (config.providers or {}).values():
+        if isinstance(conf, dict) and isinstance(conf.get("test_results"), dict):
+            total += len(conf["test_results"])
+    return total
 
 
 def _load_request_logs() -> None:
@@ -294,7 +349,7 @@ async def update_config(req: UpdateConfigRequest):
 
     config.save()
     # Re-initialize router with updated config
-    router = ProviderRouter(config=config)
+    router = build_router()
     available = await router.get_available_providers()
     return {"status": "saved", "available_providers": available}
 
@@ -355,7 +410,7 @@ async def sync_source_endpoint(req: SyncSourceRequest):
     config.port = 3001
     config.save()
     global router
-    router = ProviderRouter(config=config)
+    router = build_router()
     return {
         "status": "success",
         "source": req.source,
@@ -395,7 +450,7 @@ async def fetch_token_endpoint(req: FetchTokenRequest):
             config.providers[p_name][k] = v
         config.save()
         global router
-        router = ProviderRouter(config=config)
+        router = build_router()
         return {
             "status": "success",
             "provider": req.provider,
@@ -415,7 +470,7 @@ async def fetch_token_endpoint(req: FetchTokenRequest):
                 config.providers[p_name][k] = v
             imported.append(p_name)
         config.save()
-        router = ProviderRouter(config=config)
+        router = build_router()
         return {
             "status": "success",
             "imported_count": len(imported),
@@ -721,7 +776,7 @@ async def validate_provider_node(req: ValidateNodeRequest):
             "last_validated_model": probe_model,
         },
     )
-    router = ProviderRouter(config=config)
+    router = build_router()
     return result
 
 
@@ -733,6 +788,48 @@ async def list_provider_nodes():
         if isinstance(conf, dict) and str(conf.get("kind") or "").lower() == "node":
             nodes.append(NodeProvider(name, conf).describe())
     return {"status": "success", "nodes": nodes}
+
+
+class RefreshCatalogRequest(BaseModel):
+    provider: Optional[str] = None
+
+
+@app.get("/api/models/catalog")
+async def model_catalog():
+    """Discovered catalogs with freshness, plus the config's own size.
+
+    Freshness is reported because a stale catalog shows up later as a confusing
+    400 from a chat endpoint, not as a visibly old list.
+    """
+    freshness = await asyncio.to_thread(store.catalog_freshness)
+    models = await asyncio.to_thread(store.all_models)
+    for provider, info in freshness.items():
+        if info.get("synced_at"):
+            info["synced_ago_seconds"] = max(0, int(time.time()) - int(info["synced_at"]))
+    return {
+        "status": "success",
+        "providers": freshness,
+        "models": models,
+        "total_models": sum(len(v) for v in models.values()),
+        "refresh_hours": config.catalog_refresh_hours,
+        "unseen_days": config.catalog_unseen_days,
+        "config_kb": round(_config_size_bytes() / 1024, 1),
+        "test_results_kept": _test_results_count(),
+    }
+
+
+@app.post("/api/models/refresh")
+async def refresh_model_catalog(req: Optional[RefreshCatalogRequest] = None):
+    """Refresh one provider's catalog, or all of them."""
+    only = [req.provider] if req and req.provider else None
+    result = await catalog.sync_all(router, store, only=only)
+    if result.get("refreshed"):
+        # Pinned models first, then drop observations the providers stopped listing.
+        catalog.apply_config_models(store, config)
+        result["expired"] = await asyncio.to_thread(
+            store.expire_models, config.catalog_unseen_days
+        )
+    return {"status": "success", **result}
 
 
 @app.get("/api/cline/auth/status")
@@ -813,7 +910,7 @@ async def cline_auth_poll(flow_id: str):
             "source": "device-flow",
         },
     )
-    router = ProviderRouter(config=config)
+    router = build_router()
 
     refreshed = router.providers.get("cline")
     if refreshed is not None and session.get("accounts") is None:
@@ -934,6 +1031,8 @@ async def test_model_endpoint(req: TestModelRequest):
 
     ok_count = sum(1 for v in p_conf["test_results"].values() if v.get("status") == "ok")
     p_conf["last_test_status"] = "ok" if ok_count > 0 else "error"
+    # Keep config bounded: it is rewritten wholesale on every save.
+    config.prune_test_results()
     config.save()
 
     return {
@@ -1008,6 +1107,8 @@ async def test_all_models_endpoint(req: Optional[TestAllModelsRequest] = None):
         p_conf["last_test_status"] = "ok" if ok_count > 0 else "error"
         results[p_name] = provider_summary
 
+    # A full sweep can add hundreds of entries; trim before writing them out.
+    config.prune_test_results()
     config.save()
     return {
         "status": "completed",

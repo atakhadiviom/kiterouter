@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from kiterouter.providers.base import BaseProvider, create_sse_chunk
 from kiterouter.providers.cursor import CursorProvider
@@ -176,6 +176,8 @@ class ProviderRouter:
             "fallback_events": 0,
             "saved_tokens_approx": 0,
         }
+        # Discovered catalog accessor, injected by the server.
+        self._catalog: Optional[Callable[[], Dict[str, List[str]]]] = None
 
     def set_combos(self, combos: Dict[str, Any]) -> None:
         """Update active combos configuration."""
@@ -225,6 +227,15 @@ class ProviderRouter:
             if await provider.is_available():
                 available.append(name)
         return available
+
+    def set_catalog(self, catalog: Optional[Callable[[], Dict[str, List[str]]]]) -> None:
+        """Supply the discovered model catalog (provider → model ids).
+
+        Kept as a callable so the catalog can change without rebuilding the
+        router: a sync should be visible to the next request, not the next
+        restart.
+        """
+        self._catalog = catalog
 
     def get_all_models(self) -> List[Dict[str, Any]]:
         """Return all available models grouped across all providers."""
@@ -279,6 +290,31 @@ class ProviderRouter:
                             "object": "model",
                             "owned_by": p_name,
                             "permission": [],
+                        })
+
+        # Include the discovered catalog, so a sync shows up on the next request
+        # rather than the next restart.
+        if self._catalog is not None:
+            try:
+                catalog = self._catalog() or {}
+            except Exception:
+                catalog = {}
+            for p_name, model_ids in catalog.items():
+                if p_name not in self.providers:
+                    continue
+                for m in model_ids:
+                    if not isinstance(m, str) or not m:
+                        continue
+                    model_id = m if "/" in m else f"{p_name}/{m}"
+                    if model_id not in seen_ids:
+                        seen_ids.add(model_id)
+                        models.append({
+                            "id": model_id,
+                            "raw_id": m.split("/", 1)[1] if "/" in m else m,
+                            "object": "model",
+                            "owned_by": p_name,
+                            "permission": [],
+                            "source": "catalog",
                         })
         # Include any model combos configured in KiteRouter
         for c_name, c_data in self.combos.items():
