@@ -181,6 +181,20 @@ enforced). Returns `groups` with `cost_usd`, the `cost_billed_usd` /
 `cost_estimated_usd` split, `unknown_cost_requests`, plus window `totals`. Until
 any provider reports cost this honestly reports unknowns rather than figures.
 
+### `GET /api/quota`
+
+Quota as providers reported it — unknown stays unknown. Per provider/connection:
+latest `remaining_pct` (or `null`), `is_exhausted`, `resets_at`,
+`exhausted_until`, `source`, plus `unknown_providers` for everything that
+reported nothing (never a fabricated 100%) and `as_of`.
+
+Detection is centralized in the request funnel: rate-limit headers where a
+caller passes them, error text otherwise (antigravity's live exhaustion reads
+as a bare 429 `RESOURCE_EXHAUSTED` body with no reset time — recorded with
+`resets_at: null`). The router skips an exhausted provider only while a future
+reset time is known; a bare exhaustion with no reset is surfaced but never
+skips, because without a reset there is nothing to skip until.
+
 ## Request log
 
 ### `GET /api/logs`

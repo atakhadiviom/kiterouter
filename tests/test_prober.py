@@ -437,6 +437,11 @@ def test_prober_settings_round_trip_through_config(monkeypatch, tmp_path):
     assert reloaded.prober_delay_seconds == 1.5
     assert reloaded.prober_timeout_seconds == 120
     assert reloaded.retention_health_checks_days == 14
-    assert reloaded.retention_days() == {"health_checks": 14, "requests": 30}
+    assert reloaded.retention_days() == {
+        "health_checks": 14,
+        "requests": 30,
+        "quota_snapshots": 90,
+        "events": 90,
+    }
     assert reloaded.prober["last_run"] == 42
     assert reloaded.port == 3001

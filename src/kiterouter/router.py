@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from kiterouter.providers.base import BaseProvider, create_sse_chunk
@@ -38,6 +39,12 @@ class ProviderRouter:
         else:
             self.config = {}
             self.combos = {}
+
+        # Quota lookup hook: name -> snapshot dict (or None when unknown).
+        # Set by the server so the router can skip exhausted providers without
+        # importing the store. A bare exhaustion with no reset time is reported
+        # but never skips — without a reset there is nothing to skip until.
+        self.quota_lookup: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None
 
         self.combos_rr_index: Dict[str, int] = {}
         self.providers: Dict[str, BaseProvider] = {
@@ -381,6 +388,28 @@ class ProviderRouter:
             return self.providers[prov_name], clean_model
         return self.providers["opencode_free"], raw_model
 
+    def _quota_exhausted(self, provider_name: str) -> bool:
+        """True when quota says this provider is exhausted with a future reset.
+
+        A bare exhaustion with no reset time never skips — it is reported via
+        /api/quota so the operator sees it, but there is nothing to skip until.
+        """
+        if not self.quota_lookup:
+            return False
+        try:
+            snapshot = self.quota_lookup(provider_name)
+        except Exception:
+            return False
+        if not snapshot or not snapshot.get("is_exhausted"):
+            return False
+        resets_at = snapshot.get("resets_at")
+        if resets_at is None:
+            return False
+        try:
+            return int(resets_at) > int(time.time())
+        except (TypeError, ValueError):
+            return False
+
     async def stream_combo(
         self,
         combo: Dict[str, Any],
@@ -423,6 +452,12 @@ class ProviderRouter:
                 p_name = provider.name if provider else (prov_name or "unknown")
                 logger.warning(
                     f"Combo '{name}': Provider '{p_name}' unavailable for model '{cand_model}'. Skipping..."
+                )
+                continue
+
+            if prov_name and self._quota_exhausted(prov_name):
+                logger.warning(
+                    f"Combo '{name}': Provider '{prov_name}' exhausted until reset. Skipping..."
                 )
                 continue
 
@@ -510,7 +545,7 @@ class ProviderRouter:
         else:
             for name in self.fallback_chain:
                 p = self.providers.get(name)
-                if p and await p.is_available():
+                if p and await p.is_available() and not self._quota_exhausted(name):
                     candidates.append(p)
 
         if not candidates:

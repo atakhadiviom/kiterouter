@@ -95,7 +95,12 @@ async def test_store_endpoint_reports_size_wal_and_retention(seeded_store):
     assert body["health_checks"] == 3
     assert body["size_bytes"] > 0
     assert "wal_bytes" in body
-    assert body["retention_days"] == {"health_checks": 30, "requests": 30}
+    assert body["retention_days"] == {
+        "health_checks": 30,
+        "requests": 30,
+        "quota_snapshots": 90,
+        "events": 90,
+    }
     assert body["path"].endswith("kiterouter.db")
 
 

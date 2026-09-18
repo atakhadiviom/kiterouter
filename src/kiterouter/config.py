@@ -29,6 +29,8 @@ class KiteConfig:
     retention_requests_days: int = 30
     retention_bodies_days: int = 3
     retention_usage_days: int = 365
+    retention_quota_days: int = 90
+    retention_events_days: int = 90
     store_maintenance_seconds: int = 900
     # test_results live in config.json, which is rewritten wholesale on every
     # save — so they are bounded rather than accumulated forever. Full history
@@ -157,6 +159,8 @@ class KiteConfig:
         return {
             "health_checks": int(self.retention_health_checks_days),
             "requests": int(self.retention_requests_days),
+            "quota_snapshots": int(self.retention_quota_days),
+            "events": int(self.retention_events_days),
         }
 
     def prune_test_results(

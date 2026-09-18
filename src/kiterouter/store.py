@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger("kiterouter.store")
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # (version, [statements]) — applied in order, once each, tracked by user_version.
 MIGRATIONS: Sequence[Tuple[int, Sequence[str]]] = (
@@ -123,6 +123,43 @@ MIGRATIONS: Sequence[Tuple[int, Sequence[str]]] = (
             "ALTER TABLE requests ADD COLUMN cost_usd REAL",
             "ALTER TABLE requests ADD COLUMN cost_is_estimate INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE requests ADD COLUMN tokens_is_estimate INTEGER NOT NULL DEFAULT 0",
+        ),
+    ),
+    (
+        6,
+        (
+            # Quota snapshots: one row per provider observation. remaining_pct
+            # and resets_at stay NULL when the provider did not report them —
+            # unknown is stored as unknown, never as a fabricated 100%.
+            """
+            CREATE TABLE IF NOT EXISTS quota_snapshots (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                at            INTEGER NOT NULL,
+                provider      TEXT    NOT NULL,
+                connection    TEXT,
+                window_key    TEXT,
+                remaining_pct REAL,
+                is_exhausted  INTEGER NOT NULL DEFAULT 0,
+                resets_at     INTEGER,
+                source        TEXT,
+                raw_json      TEXT
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_quota_provider ON quota_snapshots(provider, at)",
+            "CREATE INDEX IF NOT EXISTS idx_quota_at ON quota_snapshots(at)",
+            # Activity/audit base: operator-visible events with JSON detail.
+            """
+            CREATE TABLE IF NOT EXISTS events (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                at          INTEGER NOT NULL,
+                kind        TEXT    NOT NULL,
+                actor       TEXT,
+                summary     TEXT,
+                detail_json TEXT
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_events_at ON events(at)",
+            "CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind, at)",
         ),
     ),
 )
@@ -702,6 +739,117 @@ class Store:
                 """,
                 (*params, max(1, int(limit))),
             ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------ quota
+
+    def record_quota(
+        self,
+        provider: str,
+        remaining_pct: Optional[float] = None,
+        is_exhausted: bool = False,
+        resets_at: Optional[int] = None,
+        connection: Optional[str] = None,
+        window_key: Optional[str] = None,
+        source: Optional[str] = None,
+        raw_json: Optional[str] = None,
+        at: Optional[int] = None,
+    ) -> int:
+        """Persist one quota observation. Returns its row id."""
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO quota_snapshots (
+                    at, provider, connection, window_key, remaining_pct,
+                    is_exhausted, resets_at, source, raw_json
+                ) VALUES (?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    int(at if at is not None else time.time()),
+                    provider,
+                    connection,
+                    window_key,
+                    float(remaining_pct) if remaining_pct is not None else None,
+                    1 if is_exhausted else 0,
+                    int(resets_at) if resets_at is not None else None,
+                    source,
+                    (str(raw_json)[:2000] if raw_json else None),
+                ),
+            )
+            self._conn.commit()
+            return int(cursor.lastrowid or 0)
+
+    def latest_quota(self) -> List[Dict[str, Any]]:
+        """Most recent snapshot per provider+connection."""
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT q.* FROM quota_snapshots q
+                JOIN (
+                    SELECT provider, COALESCE(connection, '') AS connection, MAX(at) AS at
+                    FROM quota_snapshots
+                    GROUP BY provider, COALESCE(connection, '')
+                ) m ON q.provider = m.provider
+                   AND COALESCE(q.connection, '') = m.connection
+                   AND q.at = m.at
+                ORDER BY q.provider, q.connection
+                """
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def quota_for(
+        self, provider: str, connection: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Latest snapshot for one provider+connection, if any was recorded."""
+        with self._lock:
+            if connection is None:
+                row = self._conn.execute(
+                    "SELECT * FROM quota_snapshots WHERE provider = ? ORDER BY at DESC, id DESC LIMIT 1",
+                    (provider,),
+                ).fetchone()
+            else:
+                row = self._conn.execute(
+                    "SELECT * FROM quota_snapshots WHERE provider = ? AND COALESCE(connection, '') = COALESCE(?, '') "
+                    "ORDER BY at DESC, id DESC LIMIT 1",
+                    (provider, connection),
+                ).fetchone()
+        return dict(row) if row else None
+
+    # ------------------------------------------------------------------ events
+
+    def record_event(
+        self,
+        kind: str,
+        summary: str,
+        actor: Optional[str] = None,
+        detail_json: Optional[str] = None,
+        at: Optional[int] = None,
+    ) -> int:
+        """Persist one audit event. Returns its row id."""
+        with self._lock:
+            cursor = self._conn.execute(
+                "INSERT INTO events (at, kind, actor, summary, detail_json) VALUES (?,?,?,?,?)",
+                (
+                    int(at if at is not None else time.time()),
+                    kind,
+                    actor,
+                    (str(summary)[:500] if summary else None),
+                    (str(detail_json)[:2000] if detail_json else None),
+                ),
+            )
+            self._conn.commit()
+            return int(cursor.lastrowid or 0)
+
+    def recent_events(self, limit: int = 50, kind: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Newest first, optionally filtered by kind."""
+        if kind:
+            query = "SELECT * FROM events WHERE kind = ? ORDER BY id DESC LIMIT ?"
+            params: tuple = (kind, max(1, int(limit)))
+        else:
+            query = "SELECT * FROM events ORDER BY id DESC LIMIT ?"
+            params = (max(1, int(limit)),)
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------ bodies

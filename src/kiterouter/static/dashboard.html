@@ -530,6 +530,47 @@
       </div>
     </section>
 
+    <!-- Quota — what providers reported; the rest reads unknown, never 100% -->
+    <section id="tab-quota" class="p-8 space-y-6 hidden">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 class="font-semibold text-base text-zinc-100">Quota</h2>
+          <p id="quota-summary" class="text-xs text-muted mt-0.5">Loading…</p>
+        </div>
+        <button onclick="loadQuotaPage()" class="px-3 py-1.5 bg-zinc-900 border border-border hover:bg-zinc-800 text-zinc-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+          <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
+        </button>
+      </div>
+
+      <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs font-mono">
+            <thead>
+              <tr class="border-b border-border text-muted uppercase text-[10px] tracking-wider">
+                <th class="pb-3 font-medium">Provider</th>
+                <th class="pb-3 font-medium">Connection</th>
+                <th class="pb-3 font-medium text-right">Remaining</th>
+                <th class="pb-3 font-medium">State</th>
+                <th class="pb-3 font-medium text-right">Resets</th>
+                <th class="pb-3 font-medium text-right">Seen</th>
+              </tr>
+            </thead>
+            <tbody id="quota-rows" class="divide-y divide-border/40 text-zinc-300">
+              <tr><td colspan="6" class="py-6 text-center text-zinc-500 font-sans">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-card border border-border rounded-xl p-4 text-xs text-muted leading-relaxed">
+        Exhaustion is detected from what providers actually send — rate-limit headers where
+        present, error text otherwise. A provider that reports nothing reads
+        <span class="font-mono">unknown</span>, never a fabricated 100%. An exhausted provider
+        is skipped only while a future reset time is known; a bare exhaustion with no reset
+        is surfaced here so you see it, but requests still try it.
+      </div>
+    </section>
+
     <section id="tab-providers" class="p-8 space-y-6 hidden">
       <!-- Section Header -->
       <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1411,10 +1452,7 @@ print(res.choices[0].message.content)</pre>
         summary:'Rate and token limits per key, account and model, with resets tracked rather than guessed.',
         reference:'OmniRoute api_key_token_limits, provider_key_limits, account_key_limits, relay_rate_limits, api_key_token_counters',
         checklist:['enforce request and token limits','track reset windows','report limit state honestly in the UI','tests + wiki sync'] },
-      { id:'quota', label:'Quota', icon:'pie-chart', group:'Routing & Resilience', status:'planned',
-        summary:'Remaining quota and the time it resets, per account — so an exhausted provider reads "exhausted until 14:00" instead of just "failing".',
-        reference:'OmniRoute /dashboard/quota; quota_snapshots (34,561 rows), provider_quota_state, provider_quota_reset_events, quota_pools/groups, provider_plans',
-        checklist:['read quota from provider responses','persist snapshots and reset windows','surface exhausted-until honestly','tests + wiki sync'] },
+      { id:'quota', label:'Quota', icon:'pie-chart', group:'Routing & Resilience', status:'live' },
       { id:'endpoint', label:'Endpoint', icon:'link', group:'Routing & Resilience', status:'planned',
         summary:'The gateway own endpoint details — base URLs, compatible wire formats and copy-ready snippets.',
         reference:'OmniRoute /dashboard/endpoint',
@@ -1785,6 +1823,9 @@ print(res.choices[0].message.content)</pre>
       }
       if (tabId === 'costs') {
         loadCostsPage();
+      }
+      if (tabId === 'quota') {
+        loadQuotaPage();
       }
       if (tabId === 'providers') {
         loadCatalog();
@@ -4627,6 +4668,61 @@ print(res.choices[0].message.content)</pre>
         ], data.groups || [], 'No requests recorded in this window.');
       } catch (e) {
         if (summaryEl) summaryEl.innerHTML = `<span class="text-rose-400">Could not load costs: ${escapeHtml(String(e.message || e))}</span>`;
+      }
+    }
+
+    async function loadQuotaPage() {
+      const summaryEl = document.getElementById('quota-summary');
+      try {
+        const res = await fetch('/api/quota');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const providers = data.providers || {};
+        const names = Object.keys(providers).sort();
+
+        const rows = [];
+        for (const name of names) {
+          for (const conn of providers[name]) {
+            rows.push({ provider: name, ...conn });
+          }
+        }
+        const exhausted = rows.filter(r => r.is_exhausted).length;
+        const unknown = (data.unknown_providers || []).length;
+
+        if (summaryEl) {
+          const stamp = data.as_of ? ` · as of ${formatRelativeTime(data.as_of)}` : '';
+          summaryEl.innerText =
+            `${names.length} reporting · ${exhausted} exhausted · ${unknown} unknown${stamp}`;
+        }
+
+        renderStatRows('quota-rows', [
+          { get: r => escapeHtml(r.provider), cls: 'text-zinc-200' },
+          { get: r => r.connection ? escapeHtml(String(r.connection).slice(0, 10)) : '—' },
+          {
+            get: r => r.remaining_pct === null || r.remaining_pct === undefined
+              ? '<span class="text-muted">unknown</span>'
+              : `${Number(r.remaining_pct).toFixed(1)}%`,
+            cls: 'text-right',
+          },
+          {
+            get: r => r.is_exhausted
+              ? '<span class="text-rose-400">exhausted</span>'
+              : '<span class="text-emerald-400">ok</span>',
+          },
+          {
+            get: r => {
+              if (r.exhausted_until) return formatRelativeTime(r.exhausted_until);
+              if (r.is_exhausted) return '<span class="text-muted">no reset reported</span>';
+              return '—';
+            },
+            cls: 'text-right',
+          },
+          { get: r => (r.at ? formatRelativeTime(r.at) : '—'), cls: 'text-muted text-right' },
+        ], rows, (data.unknown_providers || []).length
+          ? `No quota reported yet. Unknown: ${data.unknown_providers.slice(0, 8).join(', ')}${data.unknown_providers.length > 8 ? '…' : ''}.`
+          : 'No quota reported yet.');
+      } catch (e) {
+        if (summaryEl) summaryEl.innerHTML = `<span class="text-rose-400">Could not load quota: ${escapeHtml(String(e.message || e))}</span>`;
       }
     }
 

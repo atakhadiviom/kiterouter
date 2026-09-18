@@ -23,6 +23,7 @@ from kiterouter.live_health import LiveHealth
 from kiterouter.prober import HealthProber, connection_id, probe_stream
 from kiterouter.providers.node import NodeProvider
 from kiterouter.providers.translate import extract_delta_text
+from kiterouter.quota import exhausted_until, quota_from_response
 from kiterouter.router import ProviderRouter
 from kiterouter.store import Store
 from kiterouter.token_fetcher import TokenFetcher, normalize_expires_at
@@ -115,6 +116,7 @@ def build_router() -> ProviderRouter:
     """
     instance = ProviderRouter(config=config)
     instance.set_catalog(store.all_models)
+    instance.quota_lookup = lambda name: store.quota_for(name)
     return instance
 
 
@@ -299,6 +301,25 @@ def record_request_log(
     # Passive health: every real request is evidence, so the topology reflects
     # reality between tests rather than a frozen snapshot.
     live_health.record(provider, status, model=model, latency_ms=latency_ms, error=error)
+
+    # Quota observation: the response text is already in hand here, so every
+    # provider gets header-free exhaustion detection uniformly with no adapter
+    # edit. Headers are not visible at this layer, so header-derived quota only
+    # applies where a caller passes them (currently none) — error-text
+    # exhaustion is what this funnel can actually see.
+    try:
+        snapshot = quota_from_response(provider, headers=None, body_text=error if status == "error" else response_preview)
+        if snapshot is not None:
+            store.record_quota(
+                provider=provider,
+                connection=connection,
+                remaining_pct=snapshot.get("remaining_pct"),
+                is_exhausted=bool(snapshot.get("is_exhausted")),
+                resets_at=snapshot.get("resets_at"),
+                source=snapshot.get("source"),
+            )
+    except Exception as e:
+        logger.debug("Could not record quota: %s", e)
     return entry
 
 
@@ -875,6 +896,42 @@ async def cost_summary(days: int = 7, group_by: str = "provider", limit: int = 5
             "cost_estimated_usd": round(estimated, 6),
             "unknown_cost_requests": unknown,
         },
+    }
+
+
+@app.get("/api/quota")
+async def quota_status():
+    """Quota as providers reported it — unknown stays unknown.
+
+    Per provider/connection: latest remaining %, is_exhausted, resets_at, and
+    the derived exhausted_until in epoch seconds. Providers that report nothing
+    render unknown, never a fabricated 100%.
+    """
+    snapshots = await asyncio.to_thread(store.latest_quota)
+    now = int(time.time())
+    providers: Dict[str, Any] = {}
+    for snap in snapshots:
+        until = exhausted_until(snap)
+        providers.setdefault(snap["provider"], []).append(
+            {
+                "connection": snap.get("connection"),
+                "remaining_pct": snap.get("remaining_pct"),
+                "is_exhausted": bool(snap.get("is_exhausted")),
+                "resets_at": snap.get("resets_at"),
+                "exhausted_until": until,
+                "source": snap.get("source"),
+                "at": snap.get("at"),
+            }
+        )
+    return {
+        "status": "success",
+        "as_of": now,
+        "providers": providers,
+        "unknown_providers": sorted(
+            name
+            for name in config.providers
+            if name not in providers
+        ),
     }
 
 

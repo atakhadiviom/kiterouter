@@ -180,7 +180,7 @@ vm.runInContext(
   'PROVIDER_CATEGORY_BY_ID, PROVIDERS_FILTER, providerCategoryOf, providerCardStatus, ' +
   'providerIsConfigured, renderProviders, onProvidersSearch, onProvidersModelSearch, ' +
   'setProvidersView, setProvidersCategory, applyProvidersFilter, toggleProviderConfig, ' +
-  'toggleSetupSection, windowLabel, renderStatRows, formatUsd, switchTab };',
+  'toggleSetupSection, windowLabel, renderStatRows, formatUsd, switchTab, loadQuotaPage };',
   ctx
 );
 const t = ctx.__t;
@@ -619,7 +619,8 @@ check(resolved.every(([, c]) => catIds.has(c)), 'a metadata provider resolved to
 
 check(t.providerCategoryOf({ id: 'x', fields: [] }, { kind: 'node' }) === 'nodes', 'kind=node must win');
 check(t.providerCategoryOf({ id: 'x', dynamic: true }, {}) === 'imported', 'a dynamic provider is imported');
-check(t.providerCategoryOf({ id: 'x', fields: [] }, { source: 'omniroute' }) === 'imported', 'an imported source wins');
+check(t.providerCategoryOf({ id: 'x', fields: [], dynamic: true }, { source: 'omniroute' }) === 'imported', 'an imported source wins for dynamic providers');
+check(t.providerCategoryOf({ id: 'cursor', fields: [{ key: 'token' }] }, { source: 'omniroute' }) === 'oauth', 'a mapped provider keeps its kind regardless of import source');
 check(t.providerCategoryOf({ id: 'cursor', fields: [] }, { source: 'cline-cli' }) === 'oauth',
   'a local cline-cli session must not count as an import');
 check(t.providerCategoryOf({ id: 'brand-new', fields: [{ key: 'api_key' }] }, {}) === 'apikey', 'unknown api_key provider falls back to apikey');
@@ -709,6 +710,8 @@ check(/—/.test(nullTbody._innerHTML), 'null cells must render as a dash');
 check(!/null|undefined/.test(nullTbody._innerHTML), 'no raw null/undefined should leak');
 check(/id="tab-costs"/.test(html), 'costs tab section missing from markup');
 check(/loadCostsPage/.test(html), 'costs loader missing from markup');
+check(/id="tab-quota"/.test(html), 'quota tab section missing from markup');
+check(typeof t.loadQuotaPage === 'function', 'quota loader must exist');
 
 console.log(`features: ${t.FEATURES.length} | rail buttons: ${buttons.length} | labels: ${labels.length} | groups: ${groupHeaders.length}`);
 console.log(`topology: ${paths} edges, ${providerPoints.length} provider nodes | scale ${t.TOPO.scale.toFixed(3)}`);

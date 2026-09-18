@@ -229,7 +229,12 @@ def test_retention_days_covers_the_tables_that_exist():
     config = KiteConfig()
     config.retention_health_checks_days = 14
     config.retention_requests_days = 45
-    assert config.retention_days() == {"health_checks": 14, "requests": 45}
+    assert config.retention_days() == {
+        "health_checks": 14,
+        "requests": 45,
+        "quota_snapshots": 90,
+        "events": 90,
+    }
 
 
 def test_catalog_settings_round_trip(monkeypatch, tmp_path):
