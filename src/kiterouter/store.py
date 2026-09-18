@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger("kiterouter.store")
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # (version, [statements]) — applied in order, once each, tracked by user_version.
 MIGRATIONS: Sequence[Tuple[int, Sequence[str]]] = (
@@ -112,6 +112,17 @@ MIGRATIONS: Sequence[Tuple[int, Sequence[str]]] = (
             # Bodies are the disk-heavy part, so they live as capped files rather
             # than rows, and expire on their own (shorter) retention.
             "ALTER TABLE requests ADD COLUMN body_path TEXT",
+        ),
+    ),
+    (
+        5,
+        (
+            # Cost is written only when an upstream reports one and stays NULL
+            # otherwise — there is deliberately no price derivation, so nothing
+            # here can present a guessed figure as billed.
+            "ALTER TABLE requests ADD COLUMN cost_usd REAL",
+            "ALTER TABLE requests ADD COLUMN cost_is_estimate INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE requests ADD COLUMN tokens_is_estimate INTEGER NOT NULL DEFAULT 0",
         ),
     ),
 )
@@ -388,6 +399,9 @@ class Store:
         prompt_preview: Optional[str] = None,
         response_preview: Optional[str] = None,
         body_path: Optional[str] = None,
+        cost_usd: Optional[float] = None,
+        cost_is_estimate: int = 0,
+        tokens_is_estimate: int = 0,
         at: Optional[int] = None,
     ) -> int:
         """Persist one request. Returns its row id."""
@@ -398,8 +412,9 @@ class Store:
                     at, provider, connection, model, status, latency_ms, ttft_ms,
                     tokens_in, tokens_out, tokens_cache_read, tokens_cache_write,
                     tokens_reasoning, rtk_saved, combo, session_key, api_key_id,
-                    error, prompt_preview, response_preview, body_path
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    error, prompt_preview, response_preview, body_path,
+                    cost_usd, cost_is_estimate, tokens_is_estimate
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     int(at if at is not None else time.time()),
@@ -422,6 +437,9 @@ class Store:
                     (str(prompt_preview)[:400] if prompt_preview else None),
                     (str(response_preview)[:400] if response_preview else None),
                     body_path,
+                    float(cost_usd) if cost_usd is not None else None,
+                    int(cost_is_estimate or 0),
+                    int(tokens_is_estimate or 0),
                 ),
             )
             self._conn.commit()
@@ -653,6 +671,38 @@ class Store:
             item["last_error"] = (last_error.get(provider) or "")[:200] or None
             out.append(item)
         return out
+
+    def cost_summary(
+        self, since: Optional[int] = None, group_by: str = "provider", limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Spend grouped by provider, model or key.
+
+        Cost only exists where an upstream reported it. Rows with NULL cost are
+        counted as unknown, never zeroed — so until any provider reports cost
+        this honestly reports unknowns rather than figures.
+        """
+        column = {"provider": "provider", "model": "model", "key": "api_key_id"}.get(group_by)
+        if column is None:
+            raise ValueError(f"unsupported group_by: {group_by}")
+        clause, params = self._window(since)
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT COALESCE({column}, '(unattributed)')                    AS key,
+                       COUNT(*)                                                 AS requests,
+                       SUM(cost_usd)                                            AS cost_usd,
+                       SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END)        AS unknown_cost_requests,
+                       SUM(CASE WHEN cost_is_estimate = 1 THEN cost_usd ELSE 0 END) AS cost_estimated_usd,
+                       SUM(CASE WHEN cost_is_estimate = 0 THEN cost_usd ELSE 0 END) AS cost_billed_usd,
+                       MAX(at)                                                  AS last_at
+                FROM requests {clause}
+                GROUP BY key
+                ORDER BY cost_usd DESC
+                LIMIT ?
+                """,
+                (*params, max(1, int(limit))),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------ bodies
 

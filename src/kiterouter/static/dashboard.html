@@ -60,6 +60,20 @@
     }
     .topo-node { transition: border-color .15s, background-color .15s; }
     .topo-node:hover { background-color: rgba(39, 39, 42, .98); }
+
+    /* Provider cards: compact density shrinks the card to its header row. */
+    #providers-container.providers-compact [data-group-grid] {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    @media (min-width: 1280px) {
+      #providers-container.providers-compact [data-group-grid] {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+    }
+    #providers-container.providers-compact .provider-card .card-action-label,
+    #providers-container.providers-compact [id^="btn-config-"],
+    #providers-container.providers-compact [id^="config-"] { display: none; }
+    .provider-card:hover { box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
   </style>
 </head>
 <body class="flex h-screen overflow-hidden text-sm">
@@ -419,7 +433,8 @@
       <div id="token-cards" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
       <div class="bg-card border border-border rounded-xl p-4 text-xs text-muted leading-relaxed">
         These are the values upstreams actually reported. Cache read/write and reasoning stay zero for
-        providers that do not send them, and nothing here is derived from character counts.
+        providers that do not send them. Requests where the upstream sent no usage block are counted
+        from a labelled estimate instead — they never read as measured figures.
       </div>
     </section>
 
@@ -462,6 +477,56 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </section>
+
+    <!-- Costs — only what upstreams reported; the rest reads unknown, never zero -->
+    <section id="tab-costs" class="p-8 space-y-6 hidden">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 class="font-semibold text-base text-zinc-100">Costs</h2>
+          <p id="costs-summary" class="text-xs text-muted mt-0.5">Loading…</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <select id="costs-days" onchange="loadCostsPage()" class="bg-zinc-900 border border-border rounded-lg text-xs px-2 py-1.5 text-zinc-300">
+            <option value="1">last 24h</option>
+            <option value="7" selected>last 7 days</option>
+            <option value="30">last 30 days</option>
+          </select>
+          <select id="costs-group" onchange="loadCostsPage()" class="bg-zinc-900 border border-border rounded-lg text-xs px-2 py-1.5 text-zinc-300">
+            <option value="provider" selected>by provider</option>
+            <option value="model">by model</option>
+            <option value="key">by key</option>
+          </select>
+          <button onclick="loadCostsPage()" class="px-3 py-1.5 bg-zinc-900 border border-border hover:bg-zinc-800 text-zinc-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs font-mono">
+            <thead>
+              <tr class="border-b border-border text-muted uppercase text-[10px] tracking-wider">
+                <th class="pb-3 font-medium">Group</th>
+                <th class="pb-3 font-medium">Requests</th>
+                <th class="pb-3 font-medium text-right">Billed</th>
+                <th class="pb-3 font-medium text-right">Estimated</th>
+                <th class="pb-3 font-medium text-right">Unknown</th>
+                <th class="pb-3 font-medium text-right">Last</th>
+              </tr>
+            </thead>
+            <tbody id="costs-rows" class="divide-y divide-border/40 text-zinc-300">
+              <tr><td colspan="6" class="py-6 text-center text-zinc-500 font-sans">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-card border border-border rounded-xl p-4 text-xs text-muted leading-relaxed">
+        Cost is recorded only where an upstream reported it. Until any provider reports cost,
+        this page honestly reports unknowns rather than figures — a NULL is never rendered as $0.
       </div>
     </section>
 
@@ -1234,6 +1299,78 @@ print(res.choices[0].message.content)</pre>
       { id: "custom", name: "Custom Provider", type: "OpenAI Compatible", desc: "Any custom endpoint and API key", fields: [{ key: "endpoint", label: "Base URL / Endpoint", placeholder: "https://my-api.com/v1/chat/completions" }, { key: "api_key", label: "API Key", placeholder: "sk-custom..." }] }
     ];
 
+    // ── Provider categories ────────────────────────────────────────────────
+    // Groups the provider grid so it reads like OmniRoute's providers page.
+    // Every PROVIDER_METADATA id must appear in exactly one category (guarded by
+    // tests/test_dashboard_providers.py). Providers discovered from config that
+    // are not in the map are classified by providerCategoryOf.
+    const PROVIDER_CATEGORIES = [
+      { id:'oauth',    label:'OAuth & subscription', tint:'amber',
+        desc:'Signed in once — KiteRouter refreshes these tokens itself.' },
+      { id:'apikey',   label:'API key providers', tint:'blue',
+        desc:'Bring a key; requests are billed by the upstream provider.' },
+      { id:'free',     label:'Free & keyless', tint:'emerald',
+        desc:'No credential required.' },
+      { id:'imported', label:'Imported connections', tint:'violet',
+        desc:'Synced from OmniRoute, 9Router or another router.' },
+      { id:'nodes',    label:'Provider nodes', tint:'sky',
+        desc:'Described by config rather than shipped as code.' },
+    ];
+    const PROVIDER_CATEGORY_BY_ID = {
+      cursor:'oauth', antigravity:'oauth', cline:'oauth', opencode_go:'oauth',
+      opencode_zen:'oauth', codex:'oauth', claude:'oauth', copilot:'oauth',
+      opencode_free:'free', kiro:'free',
+      glm:'apikey', minimax:'apikey', command_code:'apikey', groq:'apikey',
+      openrouter:'apikey', deepseek:'apikey', opencode:'apikey', vertex:'apikey',
+      custom:'apikey', qwen_cloud_token_plan:'apikey',
+      orcarouter:'imported', tokenrouter:'imported', agentrouter:'imported',
+    };
+
+    // Provider ids the user switched off via the card toggle. saveAllProviders
+    // consults this so it does not silently re-enable them on the next save.
+    const PROVIDER_DISABLED = new Set();
+
+    // Filter state for the toolbar. Kept module-level so a poll refresh cannot
+    // reset the user's view; re-applied at the end of every renderProviders.
+    const PROVIDERS_FILTER = { query:'', modelQuery:'', view:'all', category:null };
+
+    function providerIsConfigured(p, saved, availableList) {
+      const testRes = saved.test_results || {};
+      if (Object.keys(testRes).length > 0) return true;
+      if (saved.last_test_status) return true;
+      if (availableList.includes(p.id)) return true;
+      return (p.fields || []).some(f => {
+        const v = saved[f.key];
+        return v && String(v).length > 0;
+      });
+    }
+
+    function providerCategoryOf(p, saved) {
+      if (String((saved || {}).kind || '').toLowerCase() === 'node') return 'nodes';
+      // The explicit map describes the provider kind, not where its credential
+      // came from — a Cursor OAuth token synced from OmniRoute is still OAuth.
+      // Only unmapped (dynamic) providers fall through to source-based grouping.
+      const mapped = PROVIDER_CATEGORY_BY_ID[p.id];
+      if (mapped) return mapped;
+      if (p.dynamic || (saved && saved.source && String(saved.source).length > 0 &&
+          !['cline-cli', 'device-flow', 'cline-refresh'].includes(String(saved.source)))) return 'imported';
+      if ((p.fields || []).some(f => f.key === 'api_key')) return 'apikey';
+      return 'apikey';
+    }
+
+    function providerCardStatus(p, saved, availableList) {
+      const testRes = saved.test_results || {};
+      const modelKeys = Object.keys(testRes);
+      const okCount = modelKeys.filter(m => testRes[m]?.status === 'ok').length;
+      const hasErr = modelKeys.some(m => testRes[m]?.status === 'error') || saved.last_test_status === 'error';
+      if (saved.enabled === false) return { tone:'zinc', dot:'bg-zinc-600', label:'Disabled', detail:'Disabled in config — enable to use this provider again.' };
+      if (saved.last_test_status === 'ok' || okCount > 0) return { tone:'emerald', dot:'bg-emerald-400', label:`Online (${okCount} OK)`, detail: okCount ? `${okCount} model(s) verified OK` : 'Last test passed' };
+      if (hasErr) return { tone:'rose', dot:'bg-rose-400', label:'Error', detail: saved.last_error || 'The last test failed' };
+      if (availableList.includes(p.id)) return { tone:'amber', dot:'bg-amber-400', label:'Configured (untested)', detail:'Credential present but no test has run yet.' };
+      if ((p.fields || []).length === 0) return { tone:'emerald', dot:'bg-emerald-400', label:'Keyless', detail:'Zero configuration required.' };
+      return { tone:'zinc', dot:'bg-zinc-600', label:'Not configured', detail:'No credential saved yet.' };
+    }
+
     // ── Feature registry ───────────────────────────────────────────────────
     // Mirrors OmniRoute's `(dashboard)/dashboard` page set (55 pages) plus
     // KiteRouter's own overview + connect = 57 entries. This array is the
@@ -1300,10 +1437,7 @@ print(res.choices[0].message.content)</pre>
         summary:'Who changed what, with before/after diffs for config and credential changes.',
         reference:'OmniRoute audit_log (40 rows), config_audit_log (before_json/after_json/diff_json)',
         checklist:['log config mutations with before/after','never log secret values','filter by resource and action','tests + wiki sync'] },
-      { id:'costs', label:'Costs', icon:'dollar-sign', group:'Observability', status:'planned',
-        summary:'Spend per key, provider and model over time, so free tiers and paid overflow are both visible.',
-        reference:'OmniRoute domain_cost_history (12,091 rows), daily_usage_summary, tier_assignments',
-        checklist:['capture per-request cost where the upstream reports it','roll up daily','flag free-tier vs paid usage','tests + wiki sync'] },
+      { id:'costs', label:'Costs', icon:'dollar-sign', group:'Observability', status:'live' },
       { id:'health', label:'Health', icon:'heart-pulse', group:'Observability', status:'live' },
       { id:'logs', label:'Logs', icon:'scroll-text', group:'Observability', status:'live' },
       { id:'provider-stats', label:'Provider Stats', icon:'chart-line', group:'Observability', status:'live' },
@@ -1639,6 +1773,18 @@ print(res.choices[0].message.content)</pre>
       }
       if (tabId === 'logs') {
         loadLogs(true);
+      }
+      if (tabId === 'usage') {
+        loadUsagePage();
+      }
+      if (tabId === 'tokens') {
+        loadTokensPage();
+      }
+      if (tabId === 'provider-stats') {
+        loadProviderStatsPage();
+      }
+      if (tabId === 'costs') {
+        loadCostsPage();
       }
       if (tabId === 'providers') {
         loadCatalog();
@@ -2751,101 +2897,248 @@ print(res.choices[0].message.content)</pre>
         }
       });
 
+      const byCategory = new Map(PROVIDER_CATEGORIES.map(c => [c.id, []]));
       displayList.forEach(p => {
         const saved = savedProviders[p.id] || {};
-        const testRes = saved.test_results || {};
-        const modelKeys = Object.keys(testRes);
-        const okCount = modelKeys.filter(m => testRes[m]?.status === 'ok').length;
-        const errCount = modelKeys.filter(m => testRes[m]?.status === 'error').length;
-        
-        let statusBadge = '';
-        if (saved.last_test_status === 'ok' || okCount > 0) {
-          statusBadge = `<span class="text-[10px] px-2 py-0.5 rounded font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">ONLINE (${okCount} OK)</span>`;
-        } else if (saved.last_test_status === 'error' || errCount > 0) {
-          statusBadge = `<span class="text-[10px] px-2 py-0.5 rounded font-mono bg-rose-500/10 text-rose-400 border border-rose-500/20" title="${escapeHtml(saved.last_error || 'Test failed')}">ERROR</span>`;
-        } else if (availableList.includes(p.id)) {
-          statusBadge = `<span class="text-[10px] px-2 py-0.5 rounded font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20">CONFIGURED (UNTESTED)</span>`;
-        } else {
-          statusBadge = `<span class="text-[10px] px-2 py-0.5 rounded font-mono bg-zinc-800 text-muted">NOT CONFIGURED</span>`;
+        const cat = providerCategoryOf(p, saved);
+        (byCategory.get(cat) || byCategory.get('apikey')).push({ p, saved });
+      });
+
+      renderProviderChips(savedProviders, displayList, availableList);
+
+      byCategory.forEach((items, catId) => {
+        if (items.length === 0) return;
+        const cat = PROVIDER_CATEGORIES.find(c => c.id === catId) || PROVIDER_CATEGORIES[1];
+        const configured = items.filter(({ p, saved }) => providerIsConfigured(p, saved, availableList)).length;
+
+        const group = document.createElement('section');
+        group.className = 'provider-group';
+        group.dataset.category = catId;
+
+        const modelsWords = items.flatMap(({ saved }) => (saved.models || []).map(m => String(m).toLowerCase()));
+        group.dataset.models = modelsWords.join(' ');
+
+        const tintDot = cat.tint === 'amber' ? 'bg-amber-400' : cat.tint === 'blue' ? 'bg-blue-400'
+          : cat.tint === 'emerald' ? 'bg-emerald-400' : cat.tint === 'violet' ? 'bg-violet-400' : 'bg-sky-400';
+
+        group.innerHTML = `
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-1">
+            <h3 class="font-semibold text-zinc-100 flex items-center gap-2">
+              ${cat.label}
+              <span class="text-[11px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 border border-border text-muted">${configured}/${items.length}</span>
+              <span class="w-1.5 h-1.5 rounded-full ${tintDot}"></span>
+            </h3>
+            <button onclick="testProviderGroup('${catId}')" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition flex items-center gap-1 self-start sm:self-auto">
+              <i data-lucide="play" class="w-3 h-3"></i> Test All
+            </button>
+          </div>
+          <p class="text-xs text-muted mb-3">${cat.desc}</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3" data-group-grid></div>
+        `;
+
+        const grid = group.querySelector('[data-group-grid]');
+        items.forEach(({ p, saved }) => {
+          const card = providerCard(p, saved, availableList);
+          grid.appendChild(card);
+          group._innerHTML += `<div data-provider-card="${p.id}">${card.innerHTML}</div>`;
+        });
+        container.appendChild(group);
+      });
+
+      displayList.forEach(p => {
+        const saved = savedProviders[p.id] || {};
+        if ((saved.models || []).length > 0) {
+          renderModelsList(p.id, saved.models, saved.test_results || {});
         }
+      });
+      applyProvidersFilter();
+      lucide.createIcons();
+    }
 
-        const card = document.createElement('div');
-        card.className = "bg-card border border-border rounded-xl p-5 space-y-4";
+    const PROVIDER_CHIP_TONES = {
+      amber: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
+      blue: 'bg-blue-500/10 text-blue-300 border-blue-500/20',
+      emerald: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20',
+      violet: 'bg-violet-500/10 text-violet-300 border-violet-500/20',
+      sky: 'bg-sky-500/10 text-sky-300 border-sky-500/20',
+    };
 
-        let fieldsHtml = '';
-        p.fields.forEach(f => {
-          const val = saved[f.key] || '';
-          const isConfigured = val && (val.startsWith('«redacted:') || val.length > 0);
-          const badge = isConfigured
-            ? `<span class="text-[10px] text-emerald-400 font-mono">Configured</span>`
-            : `<span class="text-[10px] text-zinc-500 font-mono">Empty</span>`;
+    function renderProviderChips(savedProviders, displayList, availableList) {
+      const el = document.getElementById('providers-chips');
+      if (!el) return;
+      const total = displayList.length;
+      const totalConfigured = displayList.filter(p => providerIsConfigured(p, savedProviders[p.id] || {}, availableList)).length;
+      const active = PROVIDERS_FILTER.category;
+      let html = `<button onclick="setProvidersCategory(null)" title="Show every category"
+        class="text-[11px] font-mono px-2 py-1 rounded-full border transition ${active ? 'bg-zinc-800 text-zinc-300 border-border' : 'bg-rose-500/15 text-rose-300 border-rose-500/30'}">Total ${totalConfigured}/${total}</button>`;
+      PROVIDER_CATEGORIES.forEach(cat => {
+        const members = displayList.filter(p => providerCategoryOf(p, savedProviders[p.id] || {}) === cat.id);
+        if (members.length === 0) return;
+        const n = members.filter(p => providerIsConfigured(p, savedProviders[p.id] || {}, availableList)).length;
+        const tone = PROVIDER_CHIP_TONES[cat.tint] || PROVIDER_CHIP_TONES.blue;
+        const on = active === cat.id;
+        html += `<button onclick="setProvidersCategory('${cat.id}')"
+          class="text-[11px] font-mono px-2 py-1 rounded-full border transition ${on ? 'bg-zinc-100 text-zinc-900 border-zinc-100' : tone + ' hover:brightness-125'}">${cat.label} ${n}/${members.length}</button>`;
+      });
+      el.innerHTML = html;
+    }
 
-          fieldsHtml += `
+    function providerCard(p, saved, availableList) {
+      const testRes = saved.test_results || {};
+      const status = providerCardStatus(p, saved, availableList);
+      const configured = providerIsConfigured(p, saved, availableList);
+      const enabled = saved.enabled !== false;
+      const models = (saved.models || []).map(m => String(m));
+
+      const card = document.createElement('div');
+      card.className = 'provider-card bg-card border border-border hover:border-zinc-600 rounded-xl p-3.5 flex flex-col gap-2.5 transition';
+      card.dataset.providerCard = p.id;
+      card.dataset.name = `${p.name} ${p.id}`.toLowerCase();
+      card.dataset.category = providerCategoryOf(p, saved);
+      card.dataset.configured = configured ? '1' : '0';
+      card.dataset.models = models.join(' ').toLowerCase();
+
+      let fieldsHtml = '';
+      p.fields.forEach(f => {
+        const val = saved[f.key] || '';
+        const isConfigured = val && (String(val).startsWith('«redacted:') || String(val).length > 0);
+        const badge = isConfigured
+          ? `<span class="text-[10px] text-emerald-400 font-mono">Configured</span>`
+          : `<span class="text-[10px] text-zinc-500 font-mono">Empty</span>`;
+
+        fieldsHtml += `
             <div>
               <div class="flex justify-between items-center mb-1">
                 <label class="text-[11px] font-medium text-muted block">${f.label}</label>
                 ${badge}
               </div>
-              <input type="text" id="input-${p.id}-${f.key}" 
-                value="" 
-                placeholder="${isConfigured ? '•••••••••••••••• (Leave blank to preserve)' : f.placeholder}" 
-                onfocus="isUserTyping = true" 
+              <input type="text" id="input-${p.id}-${f.key}"
+                value=""
+                placeholder="${isConfigured ? '•••••••••••••••• (Leave blank to preserve)' : f.placeholder}"
+                onfocus="isUserTyping = true"
                 onblur="isUserTyping = false"
                 class="w-full bg-zinc-900 border border-border px-3 py-1.5 rounded-lg text-xs font-mono text-zinc-200 focus:outline-none focus:border-blue-500">
             </div>
           `;
-        });
-
-        const cachedModels = saved.models || [];
-        const modelsVisible = cachedModels.length > 0;
-
-        card.innerHTML = `
-          <div class="flex items-start justify-between">
-            <div>
-              <div class="font-semibold text-zinc-100 flex items-center gap-2">
-                ${p.name}
-                ${statusBadge}
-              </div>
-              <div class="text-xs text-muted mt-0.5">${p.desc}</div>
-              ${saved.last_error ? `<div class="text-[11px] text-rose-400 font-mono mt-1 truncate max-w-sm" title="${escapeHtml(saved.last_error)}">⚠️ ${escapeHtml(saved.last_error)}</div>` : ''}
-            </div>
-            <div class="flex items-center gap-1.5">
-              <button onclick="fetchProviderToken('${p.id}')" id="btn-token-${p.id}" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-emerald-400 rounded text-xs transition flex items-center gap-1">
-                <i data-lucide="key" class="w-3 h-3"></i> Fetch
-              </button>
-              <button onclick="fetchProviderModels('${p.id}')" id="btn-fetch-${p.id}" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded text-xs transition flex items-center gap-1">
-                <i data-lucide="refresh-cw" class="w-3 h-3"></i> Models
-              </button>
-              <button onclick="testSingleProvider('${p.id}')" id="btn-test-${p.id}" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition">
-                Test
-              </button>
-            </div>
-          </div>
-
-          <div id="models-container-${p.id}" class="${modelsVisible ? '' : 'hidden'} text-xs bg-zinc-900/90 border border-border p-3 rounded-lg space-y-2">
-            <div class="flex items-center justify-between pb-1.5 border-b border-border/50">
-              <span class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide">
-                Available Models (<span id="models-count-${p.id}">${cachedModels.length}</span>)
-              </span>
-              <input type="text" placeholder="Filter models..." id="search-models-${p.id}" oninput="filterModels('${p.id}')"
-                class="bg-zinc-800 border border-border/80 px-2 py-0.5 rounded text-[11px] font-mono text-zinc-300 focus:outline-none w-32">
-            </div>
-            <div id="models-list-${p.id}" class="max-h-40 overflow-y-auto space-y-1 font-mono text-zinc-300">
-              <!-- Rendered via renderModelsList -->
-            </div>
-          </div>
-
-          ${fieldsHtml ? `<div class="space-y-2.5 pt-2 border-t border-border/50">${fieldsHtml}</div>` : '<div class="text-xs text-emerald-400/80 pt-1">Zero configuration required (Keyless public access)</div>'}
-
-          ${nodeSettingsHtml(p, saved)}
-        `;
-        container.appendChild(card);
-
-        if (modelsVisible) {
-          renderModelsList(p.id, cachedModels, testRes);
-        }
       });
-      lucide.createIcons();
+
+      card.innerHTML = `
+          <div class="flex items-center gap-2.5">
+            <span class="w-8 h-8 rounded-lg border border-border/70 flex items-center justify-center font-bold text-xs text-zinc-100 shrink-0"
+                  style="background:hsl(${topoHue(p.id)} 45% 18%)" title="${escapeHtml(p.name)}">${escapeHtml(topoInitials(p.name))}</span>
+            <span class="font-medium text-sm text-zinc-100 truncate flex-1" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
+            <span class="w-2 h-2 rounded-full ${status.dot} shrink-0" title="${escapeHtml(status.detail)}"></span>
+          </div>
+          <div class="text-[11px] ${status.tone === 'rose' ? 'text-rose-400' : status.tone === 'emerald' ? 'text-emerald-400' : status.tone === 'amber' ? 'text-amber-400' : 'text-muted'}" title="${escapeHtml(status.detail)}">
+            ${status.label}${saved.last_error ? ` · ${escapeHtml(String(saved.last_error).slice(0, 80))}` : ''}
+          </div>
+          <div class="flex items-center justify-between gap-1.5 pt-1 mt-auto">
+            <label class="flex items-center cursor-pointer" title="${enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}">
+              <input type="checkbox" ${enabled ? 'checked' : ''} onchange="setProviderEnabled('${p.id}', this.checked)"
+                     class="peer sr-only">
+              <span class="w-8 h-4.5 h-[18px] rounded-full bg-zinc-700 peer-checked:bg-emerald-600 relative transition after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:w-[14px] after:h-[14px] after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-[14px]"></span>
+            </label>
+            <span class="flex items-center gap-1.5">
+              <button onclick="fetchProviderToken('${p.id}')" id="btn-token-${p.id}" title="Fetch token from a local app" class="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-emerald-400 rounded text-xs transition flex items-center gap-1">
+                <i data-lucide="key" class="w-3 h-3"></i><span class="card-action-label">Fetch</span>
+              </button>
+              <button onclick="fetchProviderModels('${p.id}')" id="btn-fetch-${p.id}" title="Fetch the live model catalog" class="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded text-xs transition flex items-center gap-1">
+                <i data-lucide="refresh-cw" class="w-3 h-3"></i><span class="card-action-label">Models</span>
+              </button>
+              <button onclick="testSingleProvider('${p.id}')" id="btn-test-${p.id}" title="Run a real completion test" class="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition flex items-center gap-1">
+                <i data-lucide="play" class="w-3 h-3"></i><span class="card-action-label">Test</span>
+              </button>
+            </span>
+          </div>
+          <button onclick="toggleProviderConfig('${p.id}')" id="btn-config-${p.id}" aria-expanded="false"
+                  class="text-[11px] text-muted hover:text-zinc-200 transition flex items-center gap-1 pt-0.5">
+            <i data-lucide="chevron-down" class="w-3 h-3 transition-transform"></i> Configure
+          </button>
+          <div id="config-${p.id}" class="hidden space-y-2.5 pt-1 border-t border-border/50">
+            <div class="text-[11px] text-muted">${escapeHtml(p.desc)}</div>
+            <div id="models-container-${p.id}" class="${models.length > 0 ? '' : 'hidden'} text-xs bg-zinc-900/90 border border-border p-3 rounded-lg space-y-2">
+              <div class="flex items-center justify-between pb-1.5 border-b border-border/50">
+                <span class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide">
+                  Available Models (<span id="models-count-${p.id}">${models.length}</span>)
+                </span>
+                <input type="text" placeholder="Filter models..." id="search-models-${p.id}" oninput="filterModels('${p.id}')"
+                  class="bg-zinc-800 border border-border/80 px-2 py-0.5 rounded text-[11px] font-mono text-zinc-300 focus:outline-none w-32">
+              </div>
+              <div id="models-list-${p.id}" class="max-h-40 overflow-y-auto space-y-1 font-mono text-zinc-300">
+                <!-- Rendered via renderModelsList -->
+              </div>
+            </div>
+            ${fieldsHtml ? `<div class="space-y-2.5">${fieldsHtml}</div>` : '<div class="text-xs text-emerald-400/80">Zero configuration required (Keyless public access)</div>'}
+            ${nodeSettingsHtml(p, saved)}
+          </div>
+        `;
+      return card;
+    }
+
+    function toggleProviderConfig(providerId) {
+      const body = document.getElementById(`config-${providerId}`);
+      const btn = document.getElementById(`btn-config-${providerId}`);
+      if (!body) return;
+      const show = body.classList.contains('hidden');
+      body.classList.toggle('hidden', !show);
+      if (btn) {
+        btn.setAttribute('aria-expanded', String(show));
+        const icon = btn.querySelector('svg, i');
+        if (icon) icon.style.transform = show ? 'rotate(180deg)' : '';
+      }
+    }
+
+    function expandProviderConfig(providerId) {
+      const body = document.getElementById(`config-${providerId}`);
+      const btn = document.getElementById(`btn-config-${providerId}`);
+      if (!body || !body.classList.contains('hidden')) return;
+      body.classList.remove('hidden');
+      if (btn) btn.setAttribute('aria-expanded', 'true');
+    }
+
+    async function testProviderGroup(categoryId) {
+      const group = document.querySelector(`.provider-group[data-category="${categoryId}"]`);
+      if (!group) return;
+      const ids = [...group.querySelectorAll('[data-provider-card]')].map(el => el.dataset.providerCard);
+      const banner = document.getElementById('test-all-banner');
+      if (banner) {
+        banner.className = 'text-xs p-3 rounded-lg border bg-zinc-800 border-border text-zinc-300';
+        banner.classList.remove('hidden');
+        banner.innerText = `Testing ${ids.length} provider(s) in this group…`;
+      }
+      for (const id of ids) {
+        try { await testSingleProvider(id); } catch (e) { /* per-provider status is shown on its card */ }
+      }
+    }
+
+    async function setProviderEnabled(providerId, enabled) {
+      if (enabled) PROVIDER_DISABLED.delete(providerId);
+      else PROVIDER_DISABLED.add(providerId);
+      try {
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ providers: { [providerId]: { enabled } } })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        loadData();
+      } catch (e) {
+        if (enabled) PROVIDER_DISABLED.add(providerId);
+        else PROVIDER_DISABLED.delete(providerId);
+        alert('Failed to update provider: ' + e);
+        loadData();
+      }
+    }
+
+    function toggleSetupSection(force) {
+      const body = document.getElementById('setup-body');
+      const toggle = document.getElementById('setup-toggle');
+      const icon = document.getElementById('setup-toggle-icon');
+      if (!body || !toggle) return;
+      const show = force !== undefined ? force : body.classList.contains('hidden');
+      body.classList.toggle('hidden', !show);
+      toggle.setAttribute('aria-expanded', String(show));
+      if (icon) icon.style.transform = show ? 'rotate(180deg)' : '';
     }
 
     function renderModelsList(providerId, models, testResults) {
@@ -3188,6 +3481,9 @@ print(res.choices[0].message.content)</pre>
     // Provider model lists change constantly, so they are discovered and stored
     // with a freshness stamp rather than hardcoded.
 
+    // Warm the view-toggle active state on first paint so the control is honest.
+    setProvidersView('all');
+
     function renderCatalog(data) {
       const summaryEl = document.getElementById('catalog-summary');
       const listEl = document.getElementById('catalog-list');
@@ -3425,6 +3721,65 @@ print(res.choices[0].message.content)</pre>
       }
     }
 
+    function onProvidersSearch(value) {
+      PROVIDERS_FILTER.query = String(value || '').toLowerCase().trim();
+      applyProvidersFilter();
+    }
+
+    function onProvidersModelSearch(value) {
+      PROVIDERS_FILTER.modelQuery = String(value || '').toLowerCase().trim();
+      applyProvidersFilter();
+    }
+
+    function setProvidersView(view) {
+      PROVIDERS_FILTER.view = (view === 'configured' || view === 'compact') ? view : 'all';
+      const container = document.getElementById('providers-container');
+      if (container) container.classList.toggle('providers-compact', PROVIDERS_FILTER.view === 'compact');
+      ['all', 'configured', 'compact'].forEach(v => {
+        const btn = document.getElementById('pv-view-' + v);
+        if (!btn) return;
+        const on = PROVIDERS_FILTER.view === v;
+        btn.className = 'px-2.5 py-1.5 rounded-md text-xs flex items-center gap-1.5 transition ' +
+          (on ? 'bg-zinc-700 text-zinc-100 font-semibold' : 'text-muted hover:text-zinc-200');
+      });
+      applyProvidersFilter();
+    }
+
+    function setProvidersCategory(categoryId) {
+      PROVIDERS_FILTER.category = categoryId || null;
+      applyProvidersFilter();
+    }
+
+    function applyProvidersFilter() {
+      const container = document.getElementById('providers-container');
+      if (!container) return;
+      const cards = [...container.querySelectorAll('[data-provider-card]')];
+      let shown = 0;
+      cards.forEach(card => {
+        const name = card.dataset.name || '';
+        const models = card.dataset.models || '';
+        const matchName = !PROVIDERS_FILTER.query || name.includes(PROVIDERS_FILTER.query);
+        const matchModel = !PROVIDERS_FILTER.modelQuery || models.includes(PROVIDERS_FILTER.modelQuery);
+        const matchConfigured = PROVIDERS_FILTER.view !== 'configured' || card.dataset.configured === '1';
+        const matchCategory = !PROVIDERS_FILTER.category || card.dataset.category === PROVIDERS_FILTER.category;
+        const show = matchName && matchModel && matchConfigured && matchCategory;
+        card.classList.toggle('hidden', !show);
+        if (show) shown++;
+      });
+      container.querySelectorAll('.provider-group').forEach(group => {
+        const visible = [...group.querySelectorAll('[data-provider-card]')].some(c => !c.classList.contains('hidden'));
+        group.classList.toggle('hidden', !visible);
+      });
+      const line = document.getElementById('providers-count-line');
+      if (line) {
+        line.innerText = shown === cards.length
+          ? `${cards.length} provider(s)`
+          : `showing ${shown} of ${cards.length} provider(s)`;
+      }
+      const chips = document.getElementById('providers-chips');
+      if (chips && !chips.innerHTML) renderProviderChips({}, [], []);
+    }
+
     async function saveAllProviders() {
       const updates = {};
       document.querySelectorAll('input[id^="input-"]').forEach(el => {
@@ -3433,7 +3788,7 @@ print(res.choices[0].message.content)</pre>
         if (lastDash !== -1) {
           const provId = raw.substring(0, lastDash);
           const key = raw.substring(lastDash + 1);
-          if (!updates[provId]) updates[provId] = { enabled: true };
+          if (!updates[provId]) updates[provId] = { enabled: !PROVIDER_DISABLED.has(provId) };
           if (el.value.trim() !== '') {
             // Only update if user typed something new (blank preserves existing redacted secret)
             updates[provId][key] = el.value.trim();
@@ -3448,7 +3803,7 @@ print(res.choices[0].message.content)</pre>
       document.querySelectorAll('[data-node-field]').forEach(el => {
         const provId = el.dataset.provider;
         const field = el.dataset.nodeField;
-        if (!updates[provId]) updates[provId] = { enabled: true };
+        if (!updates[provId]) updates[provId] = { enabled: !PROVIDER_DISABLED.has(provId) };
         const value = el.value.trim();
 
         if (field === 'custom_headers_text') {
@@ -4141,9 +4496,10 @@ print(res.choices[0].message.content)</pre>
         const totals = data.totals || {};
 
         if (summaryEl) {
+          const stamp = data.as_of ? ` · as of ${formatRelativeTime(data.as_of)}` : '';
           summaryEl.innerText =
             `${totals.total || 0} requests · ${totals.ok_rate_pct || 0}% ok · ` +
-            `${(totals.tokens_in || 0) + (totals.tokens_out || 0)} tokens (${windowLabel(days)})`;
+            `${(totals.tokens_in || 0) + (totals.tokens_out || 0)} tokens (${windowLabel(days)}${stamp})`;
         }
 
         renderStatRows('usage-rows', [
@@ -4180,7 +4536,8 @@ print(res.choices[0].message.content)</pre>
         const t = await res.json();
 
         if (summaryEl) {
-          summaryEl.innerText = `${t.requests || 0} requests · ${(t.tokens_total || 0).toLocaleString()} tokens total (last 7 days)`;
+          const stamp = t.as_of ? ` · as of ${formatRelativeTime(t.as_of)}` : '';
+          summaryEl.innerText = `${t.requests || 0} requests · ${(t.tokens_total || 0).toLocaleString()} tokens total (last 7 days${stamp})`;
         }
         if (cardsEl) {
           const cards = [
@@ -4216,7 +4573,8 @@ print(res.choices[0].message.content)</pre>
 
         if (summaryEl) {
           const serving = rows.filter(r => r.ok_rate_pct > 0).length;
-          summaryEl.innerText = `${rows.length} providers seen · ${serving} served at least one success (${windowLabel(days)})`;
+          const stamp = data.as_of ? ` · as of ${formatRelativeTime(data.as_of)}` : '';
+          summaryEl.innerText = `${rows.length} providers seen · ${serving} served at least one success (${windowLabel(days)}${stamp})`;
         }
 
         renderStatRows('provider-stats-rows', [
@@ -4234,6 +4592,41 @@ print(res.choices[0].message.content)</pre>
         ], rows, 'No requests recorded in this window.');
       } catch (e) {
         if (summaryEl) summaryEl.innerHTML = `<span class="text-rose-400">Could not load provider stats: ${escapeHtml(String(e.message || e))}</span>`;
+      }
+    }
+
+    function formatUsd(value) {
+      if (value === null || value === undefined) return 'unknown';
+      return '$' + Number(value).toFixed(4);
+    }
+
+    async function loadCostsPage() {
+      const days = Number(document.getElementById('costs-days')?.value || 7);
+      const groupBy = document.getElementById('costs-group')?.value || 'provider';
+      const summaryEl = document.getElementById('costs-summary');
+      try {
+        const res = await fetch(`/api/costs?days=${days}&group_by=${groupBy}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const totals = data.totals || {};
+
+        if (summaryEl) {
+          const stamp = data.as_of ? ` · as of ${formatRelativeTime(data.as_of)}` : '';
+          summaryEl.innerText =
+            `${formatUsd(totals.cost_billed_usd)} billed · ${formatUsd(totals.cost_estimated_usd)} estimated · ` +
+            `${totals.unknown_cost_requests || 0} requests with unknown cost (${windowLabel(days)}${stamp})`;
+        }
+
+        renderStatRows('costs-rows', [
+          { get: r => escapeHtml(r.key), cls: 'text-zinc-200' },
+          { get: r => r.requests },
+          { get: r => formatUsd(r.cost_billed_usd), cls: 'text-right text-zinc-200' },
+          { get: r => formatUsd(r.cost_estimated_usd), cls: 'text-right text-amber-300' },
+          { get: r => r.unknown_cost_requests || '—', cls: 'text-right text-muted' },
+          { get: r => (r.last_at ? formatRelativeTime(r.last_at) : '—'), cls: 'text-muted text-right' },
+        ], data.groups || [], 'No requests recorded in this window.');
+      } catch (e) {
+        if (summaryEl) summaryEl.innerHTML = `<span class="text-rose-400">Could not load costs: ${escapeHtml(String(e.message || e))}</span>`;
       }
     }
 

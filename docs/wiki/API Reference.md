@@ -152,7 +152,12 @@ Restores providers, combos, and gateway settings from a JSON payload.
 
 ## Usage, tokens and provider stats
 
-All three read the recorded request history (`requests` in `kiterouter.db`) and report **only values that were actually recorded** — nothing is estimated, and no figure is derived from character counts.
+All three read the recorded request history (`requests` in `kiterouter.db`). Token
+figures are real upstream `usage` when the provider sent one; requests where the
+upstream sent no usage block carry `tokens_is_estimate=1` rather than silent real
+numbers. Cost is recorded only where an upstream reported it and stays NULL
+otherwise — there is no price table, so nothing here can present a derived figure
+as billed. Every one of these endpoints carries an `as_of` freshness stamp.
 
 ### `GET /api/usage?days=7&group_by=provider&limit=50`
 
@@ -167,6 +172,14 @@ All three read the recorded request history (`requests` in `kiterouter.db`) and 
 Per provider: `requests`, `ok_rate_pct`, **`p50_latency_ms` / `p95_latency_ms`**, **`p50_ttft_ms` / `p95_ttft_ms`**, `ttft_samples`, and `last_error`.
 
 Percentiles are computed from the recorded samples with linear interpolation. TTFT percentiles use **only rows that reported a first-token time** (`ttft_samples` says how many), so a provider whose adapter never measures TTFT shows `null` rather than a number invented from its total latency.
+
+### `GET /api/costs?days=7&group_by=provider&limit=50`
+
+`group_by` accepts `provider`, `model` or `key` (caller identity is a short hash of
+the presented credential when there is one, else `(unattributed)` — no auth is
+enforced). Returns `groups` with `cost_usd`, the `cost_billed_usd` /
+`cost_estimated_usd` split, `unknown_cost_requests`, plus window `totals`. Until
+any provider reports cost this honestly reports unknowns rather than figures.
 
 ## Request log
 

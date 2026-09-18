@@ -20,12 +20,13 @@ from kiterouter import catalog, cline_auth, updater
 from kiterouter.compressor import compress_messages
 from kiterouter.config import KiteConfig
 from kiterouter.live_health import LiveHealth
-from kiterouter.prober import HealthProber, probe_stream
+from kiterouter.prober import HealthProber, connection_id, probe_stream
 from kiterouter.providers.node import NodeProvider
 from kiterouter.providers.translate import extract_delta_text
 from kiterouter.router import ProviderRouter
 from kiterouter.store import Store
 from kiterouter.token_fetcher import TokenFetcher, normalize_expires_at
+from kiterouter.usage import UsageCollector
 
 logger = logging.getLogger("kiterouter.server")
 
@@ -170,6 +171,24 @@ def derive_session_key(messages: List[Dict[str, Any]]) -> Optional[str]:
     return None
 
 
+def derive_api_key_id(request: Optional[Request] = None) -> Optional[str]:
+    """Attribute spend without gating anyone.
+
+    Short hash of the caller's presented credential when there is one, else
+    None ("unattributed"). No auth enforcement — that belongs to the API-keys
+    tranche, not this pass.
+    """
+    credential: Optional[str] = None
+    if request is not None:
+        try:
+            credential = request.headers.get("authorization") or request.headers.get("x-api-key")
+        except Exception:
+            credential = None
+    if not credential or not str(credential).strip():
+        return None
+    return hashlib.sha256(str(credential).strip().encode("utf-8")).hexdigest()[:12]
+
+
 def write_request_body(body: Optional[Dict[str, Any]]) -> Optional[str]:
     """Persist a request/response body as a capped file.
 
@@ -213,6 +232,13 @@ def record_request_log(
     session_key: Optional[str] = None,
     combo: Optional[str] = None,
     body: Optional[Dict[str, Any]] = None,
+    tokens_cache_read: int = 0,
+    tokens_cache_write: int = 0,
+    tokens_reasoning: int = 0,
+    tokens_is_estimate: int = 0,
+    cost_usd: Optional[float] = None,
+    cost_is_estimate: int = 0,
+    api_key_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     global _recent_requests
     entry = {
@@ -251,13 +277,20 @@ def record_request_log(
             connection=connection,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
+            tokens_cache_read=tokens_cache_read,
+            tokens_cache_write=tokens_cache_write,
+            tokens_reasoning=tokens_reasoning,
+            tokens_is_estimate=tokens_is_estimate,
             rtk_saved=tokens_saved,
             combo=combo,
             session_key=session_key,
+            api_key_id=api_key_id,
             error=error,
             prompt_preview=prompt_preview,
             response_preview=response_preview,
             body_path=write_request_body(body),
+            cost_usd=cost_usd,
+            cost_is_estimate=cost_is_estimate,
         )
         entry["store_id"] = row_id
     except Exception as e:
@@ -774,7 +807,8 @@ async def store_maintain():
 async def usage_summary(days: int = 7, group_by: str = "provider", limit: int = 50):
     """Request and token totals over a window, grouped by provider/model/combo.
 
-    Only recorded values — nothing here is estimated.
+    Only recorded values — rows produced from a chars÷4 heuristic carry
+    tokens_is_estimate=1 rather than silent real numbers.
     """
     since = int(time.time()) - max(1, days) * 86400
     rows = await asyncio.to_thread(store.usage_summary, since, group_by, limit)
@@ -783,6 +817,7 @@ async def usage_summary(days: int = 7, group_by: str = "provider", limit: int = 
         "days": days,
         "group_by": group_by,
         "since": since,
+        "as_of": int(time.time()),
         "groups": rows,
         "daily": await asyncio.to_thread(store.usage_daily, since, days),
         "totals": await asyncio.to_thread(store.request_stats, since),
@@ -797,6 +832,7 @@ async def token_totals(days: int = 7):
         "status": "success",
         "days": days,
         "since": since,
+        "as_of": int(time.time()),
         **await asyncio.to_thread(store.token_breakdown, since),
     }
 
@@ -809,7 +845,36 @@ async def provider_stats(days: int = 7):
         "status": "success",
         "days": days,
         "since": since,
+        "as_of": int(time.time()),
         "providers": await asyncio.to_thread(store.provider_metrics, since),
+    }
+
+
+@app.get("/api/costs")
+async def cost_summary(days: int = 7, group_by: str = "provider", limit: int = 50):
+    """Spend over a window, grouped by provider/model/key.
+
+    Recorded only where an upstream reported cost; everything else reads as
+    unknown, never as zero. Until any provider reports cost this honestly
+    reports unknowns rather than figures.
+    """
+    since = int(time.time()) - max(1, days) * 86400
+    groups = await asyncio.to_thread(store.cost_summary, since, group_by, limit)
+    unknown = sum(int(g.get("unknown_cost_requests") or 0) for g in groups)
+    billed = sum(float(g.get("cost_billed_usd") or 0) for g in groups)
+    estimated = sum(float(g.get("cost_estimated_usd") or 0) for g in groups)
+    return {
+        "status": "success",
+        "days": days,
+        "group_by": group_by,
+        "since": since,
+        "as_of": int(time.time()),
+        "groups": groups,
+        "totals": {
+            "cost_billed_usd": round(billed, 6),
+            "cost_estimated_usd": round(estimated, 6),
+            "unknown_cost_requests": unknown,
+        },
     }
 
 
@@ -1505,6 +1570,11 @@ async def get_gateway_stats():
         "avg_latency_ms": avg_latency,
         "combos_count": len(config.combos),
         "providers_configured": len(config.providers),
+        "store": {
+            **await asyncio.to_thread(store.request_stats, int(time.time()) - 7 * 86400),
+            "days": 7,
+            "as_of": int(time.time()),
+        },
     }
 
 
@@ -1550,7 +1620,7 @@ async def restore_config(req: ConfigRestoreRequest):
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(req: ChatCompletionRequest):
+async def chat_completions(req: ChatCompletionRequest, http_request: Request):
     messages = req.messages
     rtk_saved = 0
     if config.enable_rtk:
@@ -1579,6 +1649,7 @@ async def chat_completions(req: ChatCompletionRequest):
             full_text = []
             has_error = False
             err_text = None
+            usage = UsageCollector()
             first_content_at: Optional[float] = None
             try:
                 async for chunk in router.stream_with_fallback(
@@ -1590,6 +1661,7 @@ async def chat_completions(req: ChatCompletionRequest):
                     if chunk.startswith("data: ") and chunk.strip() != "data: [DONE]":
                         try:
                             payload = json.loads(chunk[6:].strip())
+                            usage.feed(payload)
                             delta = payload.get("choices", [{}])[0].get("delta", {})
                             text = extract_delta_text(delta)
                             if text:
@@ -1608,6 +1680,14 @@ async def chat_completions(req: ChatCompletionRequest):
             finally:
                 resp_text = "".join(full_text)
                 tokens_out = max(1, len(resp_text) // 4)
+                tokens_in_reported = tokens_in
+                tokens_out_reported = tokens_out
+                tokens = usage.usage
+                tokens_is_estimate = 1
+                if tokens is not None:
+                    tokens_in_reported = tokens["tokens_in"] or tokens_in
+                    tokens_out_reported = tokens["tokens_out"] or tokens_out
+                    tokens_is_estimate = 0
                 latency_ms = round((time.time() - start_time) * 1000)
                 ttft_ms = (
                     round((first_content_at - start_time) * 1000)
@@ -1617,11 +1697,12 @@ async def chat_completions(req: ChatCompletionRequest):
                 if not has_error and is_error_content(resp_text):
                     has_error = True
                     err_text = resp_text[:200]
+                explicit_p, _ = router.parse_model_and_provider(req.model)
                 record_request_log(
                     model=req.model,
                     provider=provider_name,
-                    tokens_in=tokens_in,
-                    tokens_out=tokens_out,
+                    tokens_in=tokens_in_reported,
+                    tokens_out=tokens_out_reported,
                     status="error" if has_error else "ok",
                     latency_ms=latency_ms,
                     ttft_ms=ttft_ms,
@@ -1630,7 +1711,14 @@ async def chat_completions(req: ChatCompletionRequest):
                     response_preview=resp_text,
                     tokens_saved=rtk_saved,
                     session_key=session_key,
+                    connection=connection_id(config.providers.get(explicit_p or "", {})),
                     combo=combo_info["name"] if combo_info else None,
+                    tokens_cache_read=tokens["tokens_cache_read"] if tokens else 0,
+                    tokens_cache_write=tokens["tokens_cache_write"] if tokens else 0,
+                    tokens_reasoning=tokens["tokens_reasoning"] if tokens else 0,
+                    tokens_is_estimate=tokens_is_estimate,
+                    cost_usd=usage.cost_usd,
+                    api_key_id=derive_api_key_id(http_request),
                     body={
                         "request": {
                             "model": req.model,
@@ -1649,6 +1737,7 @@ async def chat_completions(req: ChatCompletionRequest):
         full_text = []
         has_error = False
         err_text = None
+        usage = UsageCollector()
         first_content_at: Optional[float] = None
         try:
             async for chunk in router.stream_with_fallback(
@@ -1660,6 +1749,7 @@ async def chat_completions(req: ChatCompletionRequest):
                 if chunk.startswith("data: ") and chunk.strip() != "data: [DONE]":
                     try:
                         payload = json.loads(chunk[6:].strip())
+                        usage.feed(payload)
                         delta = payload.get("choices", [{}])[0].get("delta", {})
                         # Shared with the streaming path and the prober: models that
                         # answer in reasoning_content would otherwise aggregate to
@@ -1676,7 +1766,15 @@ async def chat_completions(req: ChatCompletionRequest):
             err_text = str(e)
 
         resp_text = "".join(full_text)
-        tokens_out = max(1, len(resp_text) // 4)
+        tokens = usage.usage
+        if tokens is not None:
+            tokens_in_reported = tokens["tokens_in"] or tokens_in
+            tokens_out_reported = tokens["tokens_out"] or max(1, len(resp_text) // 4)
+            tokens_is_estimate = 0
+        else:
+            tokens_in_reported = tokens_in
+            tokens_out_reported = max(1, len(resp_text) // 4)
+            tokens_is_estimate = 1
         latency_ms = round((time.time() - start_time) * 1000)
         ttft_ms = (
             round((first_content_at - start_time) * 1000)
@@ -1690,8 +1788,8 @@ async def chat_completions(req: ChatCompletionRequest):
         record_request_log(
             model=req.model,
             provider=provider_name,
-            tokens_in=tokens_in,
-            tokens_out=tokens_out,
+            tokens_in=tokens_in_reported,
+            tokens_out=tokens_out_reported,
             status="error" if has_error else "ok",
             latency_ms=latency_ms,
             ttft_ms=ttft_ms,
@@ -1700,7 +1798,14 @@ async def chat_completions(req: ChatCompletionRequest):
             response_preview=resp_text,
             tokens_saved=rtk_saved,
             session_key=session_key,
+            connection=connection_id(config.providers.get(explicit_p or "", {})),
             combo=combo_info["name"] if combo_info else None,
+            tokens_cache_read=tokens["tokens_cache_read"] if tokens else 0,
+            tokens_cache_write=tokens["tokens_cache_write"] if tokens else 0,
+            tokens_reasoning=tokens["tokens_reasoning"] if tokens else 0,
+            tokens_is_estimate=tokens_is_estimate,
+            cost_usd=usage.cost_usd,
+            api_key_id=derive_api_key_id(http_request),
             body={
                 "request": {
                     "model": req.model,
@@ -1729,15 +1834,15 @@ async def chat_completions(req: ChatCompletionRequest):
                 }
             ],
             "usage": {
-                "prompt_tokens": tokens_in,
-                "completion_tokens": tokens_out,
-                "total_tokens": tokens_in + tokens_out,
+                "prompt_tokens": tokens_in_reported,
+                "completion_tokens": tokens_out_reported,
+                "total_tokens": tokens_in_reported + tokens_out_reported,
             },
         }
 
 
 @app.post("/v1/messages")
-async def anthropic_messages(req: AnthropicMessageRequest):
+async def anthropic_messages(req: AnthropicMessageRequest, http_request: Request):
     """Native Anthropic Messages API for Claude Code."""
     converted_messages: List[Dict[str, Any]] = []
     if req.system:
@@ -1765,6 +1870,7 @@ async def anthropic_messages(req: AnthropicMessageRequest):
         full_text = []
         has_error = False
         err_text = None
+        usage = UsageCollector()
         # 1. message_start
         yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'content': [], 'model': req.model, 'stop_reason': None, 'usage': {'input_tokens': tokens_in, 'output_tokens': 0}}})}\n\n"
         # 2. content_block_start
@@ -1781,6 +1887,7 @@ async def anthropic_messages(req: AnthropicMessageRequest):
                 if chunk.startswith("data: ") and chunk.strip() != "data: [DONE]":
                     try:
                         payload = json.loads(chunk[6:].strip())
+                        usage.feed(payload)
                         delta = payload.get("choices", [{}])[0].get("delta", {})
                         content_text = delta.get("content", "")
                         if content_text:
@@ -1799,7 +1906,15 @@ async def anthropic_messages(req: AnthropicMessageRequest):
             raise e
         finally:
             resp_text = "".join(full_text)
-            tokens_out = max(1, len(resp_text) // 4)
+            tokens = usage.usage
+            if tokens is not None:
+                tokens_in_reported = tokens["tokens_in"] or tokens_in
+                tokens_out_reported = tokens["tokens_out"] or max(1, len(resp_text) // 4)
+                tokens_is_estimate = 0
+            else:
+                tokens_in_reported = tokens_in
+                tokens_out_reported = max(1, len(resp_text) // 4)
+                tokens_is_estimate = 1
             latency_ms = round((time.time() - start_time) * 1000)
             if not has_error and is_error_content(resp_text):
                 has_error = True
@@ -1807,16 +1922,24 @@ async def anthropic_messages(req: AnthropicMessageRequest):
             record_request_log(
                 model=req.model,
                 provider=provider_name,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
+                tokens_in=tokens_in_reported,
+                tokens_out=tokens_out_reported,
                 status="error" if has_error else "ok",
                 latency_ms=latency_ms,
                 error=err_text,
+                connection=connection_id(config.providers.get(explicit_p or "", {})),
+                session_key=derive_session_key(converted_messages),
+                tokens_cache_read=tokens["tokens_cache_read"] if tokens else 0,
+                tokens_cache_write=tokens["tokens_cache_write"] if tokens else 0,
+                tokens_reasoning=tokens["tokens_reasoning"] if tokens else 0,
+                tokens_is_estimate=tokens_is_estimate,
+                cost_usd=usage.cost_usd,
+                api_key_id=derive_api_key_id(http_request),
             )
 
         # 4. content_block_stop & message_delta & message_stop
         yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
-        yield f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': tokens_out}})}\n\n"
+        yield f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': tokens_out_reported}})}\n\n"
         yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
 
     return StreamingResponse(anthropic_event_stream(), media_type="text/event-stream")

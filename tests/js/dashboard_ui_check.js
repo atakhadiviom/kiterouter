@@ -15,13 +15,77 @@ const code = scripts[scripts.length - 1]; // the dashboard script (script[0] is 
 const elements = {};
 const windowListeners = {};
 
+function attrToDatasetKey(attr) {
+  return attr.replace(/^data-/, '').replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+function matchesSel(el, sel) {
+  let m = sel.match(/^\.([a-zA-Z0-9_-]+)(?:\[([a-z-]+)(?:="([^"]*)")?\])?$/);
+  if (m) {
+    if (!((' ' + (el.className || '') + ' ').includes(' ' + m[1] + ' '))) return false;
+    if (!m[2]) return true;
+    const key = attrToDatasetKey(m[2]);
+    const val = (el.dataset && el.dataset[key] !== undefined) ? String(el.dataset[key]) : el._attrs[m[2]];
+    return val !== undefined && (m[3] === undefined || val === m[3]);
+  }
+  m = sel.match(/^\[([a-z-]+)(?:="([^"]*)")?\]$/);
+  if (m) {
+    const key = attrToDatasetKey(m[1]);
+    const val = (el.dataset && el.dataset[key] !== undefined) ? String(el.dataset[key]) : el._attrs[m[1]];
+    return val !== undefined && (m[2] === undefined || val === m[2]);
+  }
+  m = sel.match(/^#([a-zA-Z0-9_-]+)$/);
+  if (m) return el.id === m[1];
+  return false;
+}
+
+function serializeEl(el) {
+  const attrs = [];
+  if (el.id) attrs.push(`id="${el.id}"`);
+  if (el.className) attrs.push(`class="${el.className}"`);
+  for (const [k, v] of Object.entries(el.dataset || {})) {
+    const attr = 'data-' + k.replace(/[A-Z]/g, c => '-' + c.toLowerCase());
+    attrs.push(`${attr}="${v}"`);
+  }
+  for (const [k, v] of Object.entries(el._attrs || {})) {
+    attrs.push(`${k}="${v}"`);
+  }
+  const kids = (el.children || []).map(serializeEl).join('');
+  return `<${el.tagName}${attrs.length ? ' ' + attrs.join(' ') : ''}>${el._innerHTML || ''}${kids}</${el.tagName}>`;
+}
+
 function makeEl(tag = 'div', id = '') {
   const el = {
     tagName: tag, id, className: '', _innerHTML: '', textContent: '', dataset: {}, style: {},
     _attrs: {}, _listeners: {}, children: [],
     clientWidth: 1000, clientHeight: 460,
-    get innerHTML() { return this._innerHTML; },
-    set innerHTML(v) { this._innerHTML = v; },
+    get innerHTML() {
+      if (this.children.length) return (this._innerHTML || '') + this.children.map(serializeEl).join('');
+      return this._innerHTML;
+    },
+    set innerHTML(v) {
+      this._innerHTML = v;
+      if (typeof v === 'string') {
+        if (v.includes('data-group-grid') &&
+            !this.children.some(c => c._attrs && ('data-group-grid' in c._attrs))) {
+          const grid = makeEl('div');
+          grid._attrs['data-group-grid'] = '';
+          this.children.push(grid);
+        }
+        if (v.includes('data-provider-card')) {
+          const grid = this.children.find(c => c._attrs && ('data-group-grid' in c._attrs));
+          if (grid) {
+            const ids = [...v.matchAll(/data-provider-card="([a-z0-9_-]+)"/g)].map(m => m[1]);
+            for (const cardId of ids) {
+              if (grid.children.some(c => c.dataset.providerCard === cardId)) continue;
+              const card = makeEl('div');
+              card.dataset.providerCard = cardId;
+              grid.children.push(card);
+            }
+          }
+        }
+      }
+    },
     classList: {
       _s: new Set(),
       add(...c) { c.forEach(x => this._s.add(x)); },
@@ -35,8 +99,18 @@ function makeEl(tag = 'div', id = '') {
     addEventListener(t, fn) { (this._listeners[t] = this._listeners[t] || []).push(fn); },
     dispatch(t, ev) { (this._listeners[t] || []).forEach(fn => fn(ev)); },
     getBoundingClientRect() { return { top: 0, right: 0, height: 0 }; },
-    querySelectorAll() { return []; },
-    querySelector() { return null; },
+    querySelectorAll(sel) {
+      const out = [];
+      const walk = (node) => {
+        for (const child of (node.children || [])) {
+          if (matchesSel(child, sel)) out.push(child);
+          walk(child);
+        }
+      };
+      walk(this);
+      return out;
+    },
+    querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
   };
   return el;
 }
@@ -44,6 +118,15 @@ function makeEl(tag = 'div', id = '') {
 function reg(id, tag = 'div') { const el = makeEl(tag, id); elements[id] = el; return el; }
 
 const navEl = reg('nav-rail', 'nav');
+const provContainer = reg('providers-container');
+const provChips = reg('providers-chips');
+const provCountLine = reg('providers-count-line');
+const pvViewAll = reg('pv-view-all', 'button');
+const pvViewConfigured = reg('pv-view-configured', 'button');
+const pvViewCompact = reg('pv-view-compact', 'button');
+const setupBody = reg('setup-body');
+const setupToggle = reg('setup-toggle', 'button');
+reg('setup-toggle-icon', 'i');
 const appRail = reg('app-rail', 'aside');
 const railToggle = reg('rail-toggle', 'button');
 const railTooltip = reg('rail-tooltip');
@@ -93,7 +176,11 @@ vm.runInContext(
   'renderTopology, renderTopologyGraph, topoZoom, topoFit, topoStatusOf, topoEdgePath, ' +
   'initTopologyInteractions, TOPO, renderHealthStats, renderHealthConnections, ' +
   'renderHealthRecent, formatMs, formatBytes, nodeSettingsHtml, NODE_API_TYPES, renderCatalog, ' +
-  'renderLogs, renderLogStats, logToCurl };',
+  'renderLogs, renderLogStats, logToCurl, PROVIDER_METADATA, PROVIDER_CATEGORIES, ' +
+  'PROVIDER_CATEGORY_BY_ID, PROVIDERS_FILTER, providerCategoryOf, providerCardStatus, ' +
+  'providerIsConfigured, renderProviders, onProvidersSearch, onProvidersModelSearch, ' +
+  'setProvidersView, setProvidersCategory, applyProvidersFilter, toggleProviderConfig, ' +
+  'toggleSetupSection, windowLabel, renderStatRows, formatUsd, switchTab };',
   ctx
 );
 const t = ctx.__t;
@@ -518,6 +605,110 @@ for (const f of planned) {
 for (const f of t.FEATURES.filter(x => x.status === 'live')) {
   check(t.renderFeaturePlan(f.id) === null, `live feature ${f.id} generated a stub panel`);
 }
+
+// ── provider categories + grouped cards ───────────────────────────────────
+const metaIds = t.PROVIDER_METADATA.map(m => m.id);
+check(new Set(metaIds).size === metaIds.length, 'duplicate PROVIDER_METADATA ids');
+const catIds = new Set(t.PROVIDER_CATEGORIES.map(c => c.id));
+check(catIds.size === 5, `expected 5 categories, got ${catIds.size}`);
+const resolved = metaIds.map(id => {
+  const p = t.PROVIDER_METADATA.find(m => m.id === id);
+  return [id, t.providerCategoryOf(p, {})];
+});
+check(resolved.every(([, c]) => catIds.has(c)), 'a metadata provider resolved to an unknown category');
+
+check(t.providerCategoryOf({ id: 'x', fields: [] }, { kind: 'node' }) === 'nodes', 'kind=node must win');
+check(t.providerCategoryOf({ id: 'x', dynamic: true }, {}) === 'imported', 'a dynamic provider is imported');
+check(t.providerCategoryOf({ id: 'x', fields: [] }, { source: 'omniroute' }) === 'imported', 'an imported source wins');
+check(t.providerCategoryOf({ id: 'cursor', fields: [] }, { source: 'cline-cli' }) === 'oauth',
+  'a local cline-cli session must not count as an import');
+check(t.providerCategoryOf({ id: 'brand-new', fields: [{ key: 'api_key' }] }, {}) === 'apikey', 'unknown api_key provider falls back to apikey');
+
+// status tones mirror the topology vocabulary
+const toneOf = (p, saved, avail = []) => t.providerCardStatus(p, saved, avail).tone;
+check(toneOf({ id: 'a' }, { enabled: false }) === 'zinc', 'disabled must read as zinc');
+check(toneOf({ id: 'a' }, { test_results: { m: { status: 'ok' } }, last_test_status: 'ok' }) === 'emerald', 'ok tests must read as emerald');
+check(toneOf({ id: 'a' }, { last_test_status: 'error', last_error: 'boom' }) === 'rose', 'failed tests must read as rose');
+check(toneOf({ id: 'a', fields: [{ key: 'api_key' }] }, {}, ['a']) === 'amber', 'untested config must read as amber');
+check(toneOf({ id: 'a', fields: [] }, {}) === 'emerald', 'keyless providers read as emerald');
+check(toneOf({ id: 'a', fields: [{ key: 'api_key' }] }, {}) === 'zinc', 'unconfigured reads as zinc');
+
+// renderProviders builds grouped cards; filtering only hides them, because
+// saveAllProviders scans every input[id^="input-"] in the document.
+const fixture = {
+  cursor: { token: '«redacted:tok»', machine_id: '«redacted:m»', test_results: { 'composer-2.5': { status: 'ok' } }, last_test_status: 'ok', models: ['composer-2.5'] },
+  glm: { api_key: '«redacted:k»', last_test_status: 'error', last_error: 'GLM upstream HTTP 401', models: [] },
+  kiro: { enabled: false, token: '«redacted:k»', models: [] },
+  orcarouter: { api_key: '«redacted:o»', source: 'omniroute', models: ['orca/auto'] },
+};
+provContainer.children = [];
+provContainer._innerHTML = '';
+t.renderProviders(fixture, ['cursor', 'glm']);
+// Group markup accumulates on each group element; the container itself only
+// carries the chips markup, so collect both for the content assertions.
+const provHtml = provContainer.children.map(g => g.innerHTML || '').join('\n') + (provChips.innerHTML || '');
+const groupCount = provContainer.children.filter(g => (g.className || '').includes('provider-group')).length;
+check(groupCount >= 3, `expected grouped sections, got ${groupCount}`);
+check(/OAuth & subscription/.test(provHtml) && /API key providers/.test(provHtml), 'category headings missing');
+check(/data-provider-card="cursor"/.test(provHtml), 'cursor card missing');
+check(/input-cursor-token/.test(provHtml) && /input-glm-api_key/.test(provHtml), 'credential inputs must keep their ids');
+check(/config-cursor/.test(provHtml) && /models-list-cursor/.test(provHtml), 'configure area and model list missing');
+check(/title="GLM upstream HTTP 401"/.test(provHtml), 'the upstream error must reach the card tooltip');
+check(!/\$\{/.test(provHtml), 'unsubstituted placeholder in provider cards');
+
+// applyProvidersFilter hides cards in the live stub DOM. Rebuild a minimal set.
+const mkCard = (id, name, cat, configured, models) => {
+  const c = makeEl('div');
+  c.dataset.providerCard = id;
+  c.dataset.name = name.toLowerCase();
+  c.dataset.category = cat;
+  c.dataset.configured = configured;
+  c.dataset.models = models;
+  return c;
+};
+const g1 = makeEl('section'); g1.className = 'provider-group';
+g1.children = [mkCard('cursor', 'cursor ide cursor', 'oauth', '1', 'composer-2.5'), mkCard('copilot', 'github copilot copilot', 'oauth', '0', '')];
+const g2 = makeEl('section'); g2.className = 'provider-group';
+g2.children = [mkCard('glm', 'zhipu glm glm', 'apikey', '1', 'glm-5.1')];
+provContainer.children = [g1, g2];
+t.PROVIDERS_FILTER.query = ''; t.PROVIDERS_FILTER.modelQuery = ''; t.PROVIDERS_FILTER.view = 'all'; t.PROVIDERS_FILTER.category = null;
+t.applyProvidersFilter();
+check(g1.children.every(c => !c.classList.contains('hidden')), 'unfiltered cards must all show');
+t.onProvidersSearch('glm');
+check(g1.children.every(c => c.classList.contains('hidden')) && !g2.children[0].classList.contains('hidden'), 'search must narrow to glm');
+t.onProvidersSearch(''); t.onProvidersModelSearch('composer');
+check(!g1.children[0].classList.contains('hidden') && g1.children[1].classList.contains('hidden'), 'model search must match cached models');
+t.onProvidersModelSearch(''); t.setProvidersView('configured');
+check(g1.children[1].classList.contains('hidden') && !g1.children[0].classList.contains('hidden'), 'configured view must hide the unconfigured card');
+t.setProvidersView('all'); t.setProvidersCategory('apikey');
+check(g1.children.every(c => c.classList.contains('hidden')) && !g2.children[0].classList.contains('hidden'), 'category chips must scope the grid');
+t.setProvidersCategory(null);
+check(g1.children.every(c => !c.classList.contains('hidden')), 'clearing the chip must restore the grid');
+check(provCountLine.innerText === '3 provider(s)', `count line: ${provCountLine.innerText}`);
+t.setProvidersView('compact');
+check(provContainer.classList.contains('providers-compact'), 'compact view must set the density class');
+t.setProvidersView('all');
+
+// ── usage / tokens / provider-stats / costs tables ─────────────────────
+check(t.windowLabel(1) === 'last 24h', 'windowLabel(1)');
+check(t.windowLabel(30) === 'last 30 days', 'windowLabel(30)');
+check(t.formatUsd(null) === 'unknown', 'a null cost must render as unknown, not $0');
+check(t.formatUsd(0.004) === '$0.0040', `formatUsd(0.004) = ${t.formatUsd(0.004)}`);
+check(typeof t.switchTab === 'function', 'switchTab must exist');
+
+const statTbody = reg('stat-tbody', 'tbody');
+t.renderStatRows('stat-tbody', [{ get: r => r.key }, { get: r => r.requests }], [
+  { key: 'alpha', requests: 3 },
+]);
+check(/alpha/.test(statTbody._innerHTML), 'renderStatRows should render rows');
+t.renderStatRows('stat-tbody', [{ get: r => r.key }, { get: r => r.requests }], [], 'Nothing here');
+check(/Nothing here/.test(statTbody._innerHTML), 'an empty table should explain itself');
+const nullTbody = reg('null-tbody', 'tbody');
+t.renderStatRows('null-tbody', [{ get: r => r.cost }, { get: r => r.x }], [{ cost: null, x: '' }]);
+check(/—/.test(nullTbody._innerHTML), 'null cells must render as a dash');
+check(!/null|undefined/.test(nullTbody._innerHTML), 'no raw null/undefined should leak');
+check(/id="tab-costs"/.test(html), 'costs tab section missing from markup');
+check(/loadCostsPage/.test(html), 'costs loader missing from markup');
 
 console.log(`features: ${t.FEATURES.length} | rail buttons: ${buttons.length} | labels: ${labels.length} | groups: ${groupHeaders.length}`);
 console.log(`topology: ${paths} edges, ${providerPoints.length} provider nodes | scale ${t.TOPO.scale.toFixed(3)}`);

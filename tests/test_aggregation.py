@@ -247,3 +247,74 @@ async def test_endpoints_exclude_rows_outside_the_window():
 
     assert not any(g["key"] == "ancient" for g in narrow.json()["groups"])
     assert any(g["key"] == "ancient" for g in wide.json()["groups"])
+
+
+def test_cost_summary_splits_billed_estimated_and_unknown():
+    now = int(time.time())
+    server.store.record_request(
+        provider="bill", model="m", status="ok", cost_usd=0.01, at=now
+    )
+    server.store.record_request(
+        provider="bill", model="m", status="ok", cost_usd=0.02, cost_is_estimate=1, at=now
+    )
+    server.store.record_request(provider="bill", model="m", status="ok", at=now)
+
+    rows = server.store.cost_summary(since=now - 86400)
+    row = next(g for g in rows if g["key"] == "bill")
+    assert row["cost_usd"] == pytest.approx(0.03)
+    assert row["cost_billed_usd"] == pytest.approx(0.01)
+    assert row["cost_estimated_usd"] == pytest.approx(0.02)
+    assert row["unknown_cost_requests"] == 1
+    assert row["requests"] == 3
+
+
+def test_cost_groups_by_key_and_counts_unattributed():
+    now = int(time.time())
+    server.store.record_request(
+        provider="p", model="m", status="ok", cost_usd=0.05, api_key_id="abc123", at=now
+    )
+    server.store.record_request(provider="p", model="m", status="ok", at=now)
+
+    rows = server.store.cost_summary(since=now - 86400, group_by="key")
+    assert next(g for g in rows if g["key"] == "abc123")["cost_usd"] == pytest.approx(0.05)
+    assert next(g for g in rows if g["key"] == "(unattributed)")["unknown_cost_requests"] == 1
+
+
+def test_cost_summary_rejects_unknown_grouping():
+    with pytest.raises(ValueError):
+        server.store.cost_summary(group_by="'; DROP TABLE requests;--")
+
+
+@pytest.mark.asyncio
+async def test_costs_endpoint_reports_unknowns_not_zeroes():
+    now = int(time.time())
+    server.store.record_request(provider="gamma", model="m", status="ok", at=now)
+
+    async with client() as c:
+        resp = await c.get("/api/costs?days=1")
+
+    body = resp.json()
+    assert body["status"] == "success"
+    assert "as_of" in body
+    row = next(g for g in body["groups"] if g["key"] == "gamma")
+    assert row["cost_usd"] is None
+    assert row["unknown_cost_requests"] >= 1
+    assert body["totals"]["unknown_cost_requests"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_usage_endpoints_carry_freshness_and_estimate_flags():
+    server.store.record_request(
+        provider="est", model="m", status="ok", tokens_in=4, tokens_out=2,
+        tokens_is_estimate=1,
+    )
+    row = server.store.request_by_id(server.store.count_requests() and server.store.recent_requests(limit=1)[0]["id"])
+    assert row is not None
+    assert row["tokens_is_estimate"] == 1
+
+    async with client() as c:
+        usage = await c.get("/api/usage?days=1")
+        stats = await c.get("/api/stats")
+
+    assert "as_of" in usage.json()
+    assert "store" in stats.json() and "as_of" in stats.json()["store"]

@@ -11,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from kiterouter import server
 from kiterouter.server import app
-from kiterouter.store import Store
+from kiterouter.store import SCHEMA_VERSION, Store
 
 
 @pytest.fixture
@@ -121,7 +121,7 @@ def test_stats_reports_every_table(store):
     assert stats["requests"] == 1
     assert stats["health_checks"] == 1
     assert stats["models"] == 1
-    assert stats["schema_version"] == 4
+    assert stats["schema_version"] == SCHEMA_VERSION
 
 
 # ── store: body artifacts ────────────────────────────────────────────────────
