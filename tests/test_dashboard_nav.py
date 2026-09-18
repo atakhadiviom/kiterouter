@@ -39,7 +39,7 @@ LUCIDE_ICONS = {
     "download-cloud", "edit-3", "file-archive", "gamepad-2", "gauge", "gift",
     "git-branch", "git-commit-vertical", "git-fork", "git-merge", "graduation-cap", "heart-pulse",
     "history", "image", "key", "key-round", "languages", "layers",
-    "layout-dashboard", "link", "list-checks", "list-ordered", "loader",
+    "layout-dashboard", "layout-grid", "chevron-down", "list-filter", "link", "list-checks", "list-ordered", "loader",
     "loader-2", "memory-stick", "messages-square", "monitor", "network",
     "maximize", "minus",
     "pie-chart", "play", "play-circle", "plug", "plug-zap", "plus", "puzzle",

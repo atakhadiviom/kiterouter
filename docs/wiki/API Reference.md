@@ -150,6 +150,24 @@ Restores providers, combos, and gateway settings from a JSON payload.
 
 `provider_health` is passive: every logged request records `{status, model, latency_ms, at, error?}` for its provider. The dashboard prefers it over a recorded test whenever it is fresher, so the topology reflects reality between test runs. It is kept in memory with a throttled write to `~/.kiterouter/live_health.json` — deliberately not the main config, which is large and rewritten wholesale.
 
+## Usage, tokens and provider stats
+
+All three read the recorded request history (`requests` in `kiterouter.db`) and report **only values that were actually recorded** — nothing is estimated, and no figure is derived from character counts.
+
+### `GET /api/usage?days=7&group_by=provider&limit=50`
+
+`group_by` accepts `provider`, `model` or `combo` (anything else is rejected with a 400 rather than interpolated into SQL). Returns `groups` (request count, `ok`, `failed`, `ok_rate_pct`, tokens in/out, cache read/write, reasoning, `rtk_saved`, `last_at`), `daily` buckets, and `totals` for the whole window.
+
+### `GET /api/tokens?days=7`
+
+`tokens_in`, `tokens_out`, `tokens_cache_read`, `tokens_cache_write`, `tokens_reasoning`, `rtk_saved`, `requests`, and `tokens_total` (input + output). Cache and reasoning stay zero for providers that never report them.
+
+### `GET /api/provider-stats?days=7`
+
+Per provider: `requests`, `ok_rate_pct`, **`p50_latency_ms` / `p95_latency_ms`**, **`p50_ttft_ms` / `p95_ttft_ms`**, `ttft_samples`, and `last_error`.
+
+Percentiles are computed from the recorded samples with linear interpolation. TTFT percentiles use **only rows that reported a first-token time** (`ttft_samples` says how many), so a provider whose adapter never measures TTFT shows `null` rather than a number invented from its total latency.
+
 ## Request log
 
 ### `GET /api/logs`

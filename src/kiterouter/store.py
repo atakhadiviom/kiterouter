@@ -501,6 +501,159 @@ class Store:
         with self._lock:
             return int(self._conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0] or 0)
 
+    # ------------------------------------------------------------ aggregation
+
+    @staticmethod
+    def _percentile(values: List[int], pct: float) -> Optional[int]:
+        """Linear-interpolated percentile. None for an empty sample."""
+        if not values:
+            return None
+        ordered = sorted(values)
+        if len(ordered) == 1:
+            return ordered[0]
+        rank = (len(ordered) - 1) * (pct / 100.0)
+        low = int(rank)
+        high = min(low + 1, len(ordered) - 1)
+        return int(round(ordered[low] + (ordered[high] - ordered[low]) * (rank - low)))
+
+    def _window(self, since: Optional[int]) -> Tuple[str, tuple]:
+        return ("WHERE at >= ?", (int(since),)) if since is not None else ("WHERE 1=1", ())
+
+    def usage_summary(
+        self, since: Optional[int] = None, group_by: str = "provider", limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Request and token totals grouped by provider, model or combo."""
+        column = {"provider": "provider", "model": "model", "combo": "combo"}.get(group_by)
+        if column is None:
+            raise ValueError(f"unsupported group_by: {group_by}")
+        clause, params = self._window(since)
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT COALESCE({column}, '(unknown)')              AS key,
+                       COUNT(*)                                     AS requests,
+                       SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS ok,
+                       SUM(tokens_in)                               AS tokens_in,
+                       SUM(tokens_out)                              AS tokens_out,
+                       SUM(tokens_cache_read)                       AS tokens_cache_read,
+                       SUM(tokens_cache_write)                      AS tokens_cache_write,
+                       SUM(tokens_reasoning)                        AS tokens_reasoning,
+                       SUM(rtk_saved)                               AS rtk_saved,
+                       MAX(at)                                      AS last_at
+                FROM requests {clause}
+                GROUP BY key
+                ORDER BY requests DESC
+                LIMIT ?
+                """,
+                (*params, max(1, int(limit))),
+            ).fetchall()
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            total = int(item.get("requests") or 0)
+            ok = int(item.get("ok") or 0)
+            item["failed"] = total - ok
+            item["ok_rate_pct"] = round(ok * 100.0 / total, 1) if total else 0.0
+            out.append(item)
+        return out
+
+    def usage_daily(self, since: Optional[int] = None, limit: int = 30) -> List[Dict[str, Any]]:
+        """Per-day request and token totals, newest first."""
+        clause, params = self._window(since)
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT strftime('%Y-%m-%d', at, 'unixepoch', 'localtime') AS day,
+                       COUNT(*)                                     AS requests,
+                       SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS ok,
+                       SUM(tokens_in)                               AS tokens_in,
+                       SUM(tokens_out)                              AS tokens_out,
+                       SUM(rtk_saved)                               AS rtk_saved
+                FROM requests {clause}
+                GROUP BY day
+                ORDER BY day DESC
+                LIMIT ?
+                """,
+                (*params, max(1, int(limit))),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def token_breakdown(self, since: Optional[int] = None) -> Dict[str, Any]:
+        """Token totals split exactly as recorded — no derived or estimated parts."""
+        clause, params = self._window(since)
+        with self._lock:
+            row = self._conn.execute(
+                f"""
+                SELECT SUM(tokens_in)            AS tokens_in,
+                       SUM(tokens_out)           AS tokens_out,
+                       SUM(tokens_cache_read)    AS tokens_cache_read,
+                       SUM(tokens_cache_write)   AS tokens_cache_write,
+                       SUM(tokens_reasoning)     AS tokens_reasoning,
+                       SUM(rtk_saved)            AS rtk_saved,
+                       COUNT(*)                  AS requests
+                FROM requests {clause}
+                """,
+                params,
+            ).fetchone()
+        out = {k: int(v or 0) for k, v in dict(row).items()}
+        out["tokens_total"] = out["tokens_in"] + out["tokens_out"]
+        return out
+
+    def provider_metrics(self, since: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Per-provider counts, success rate and latency/TTFT percentiles.
+
+        Percentiles are computed from the recorded values rather than approximated
+        in SQL, and TTFT is only averaged over rows that actually reported one.
+        """
+        clause, params = self._window(since)
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT provider,
+                       COUNT(*)                                     AS requests,
+                       SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END) AS ok,
+                       MAX(at)                                      AS last_at
+                FROM requests {clause}
+                GROUP BY provider
+                ORDER BY requests DESC
+                """,
+                params,
+            ).fetchall()
+            samples = self._conn.execute(
+                f"SELECT provider, latency_ms, ttft_ms, error FROM requests {clause}",
+                params,
+            ).fetchall()
+
+        latencies: Dict[str, List[int]] = {}
+        ttfts: Dict[str, List[int]] = {}
+        last_error: Dict[str, str] = {}
+        for sample in samples:
+            provider = sample["provider"] or "(unknown)"
+            if sample["latency_ms"] is not None:
+                latencies.setdefault(provider, []).append(int(sample["latency_ms"]))
+            if sample["ttft_ms"] is not None:
+                ttfts.setdefault(provider, []).append(int(sample["ttft_ms"]))
+            if sample["error"]:
+                last_error.setdefault(provider, sample["error"])
+
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            provider = item.get("provider") or "(unknown)"
+            total = int(item.get("requests") or 0)
+            ok = int(item.get("ok") or 0)
+            item["provider"] = provider
+            item["failed"] = total - ok
+            item["ok_rate_pct"] = round(ok * 100.0 / total, 1) if total else 0.0
+            item["p50_latency_ms"] = self._percentile(latencies.get(provider, []), 50)
+            item["p95_latency_ms"] = self._percentile(latencies.get(provider, []), 95)
+            item["p50_ttft_ms"] = self._percentile(ttfts.get(provider, []), 50)
+            item["p95_ttft_ms"] = self._percentile(ttfts.get(provider, []), 95)
+            item["ttft_samples"] = len(ttfts.get(provider, []))
+            item["last_error"] = (last_error.get(provider) or "")[:200] or None
+            out.append(item)
+        return out
+
     # ------------------------------------------------------------------ bodies
 
     def prune_bodies(self, retention_days: int, now: Optional[int] = None) -> int:

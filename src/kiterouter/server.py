@@ -770,6 +770,49 @@ async def store_maintain():
     return {"status": "completed", **result, **(await asyncio.to_thread(store.stats))}
 
 
+@app.get("/api/usage")
+async def usage_summary(days: int = 7, group_by: str = "provider", limit: int = 50):
+    """Request and token totals over a window, grouped by provider/model/combo.
+
+    Only recorded values — nothing here is estimated.
+    """
+    since = int(time.time()) - max(1, days) * 86400
+    rows = await asyncio.to_thread(store.usage_summary, since, group_by, limit)
+    return {
+        "status": "success",
+        "days": days,
+        "group_by": group_by,
+        "since": since,
+        "groups": rows,
+        "daily": await asyncio.to_thread(store.usage_daily, since, days),
+        "totals": await asyncio.to_thread(store.request_stats, since),
+    }
+
+
+@app.get("/api/tokens")
+async def token_totals(days: int = 7):
+    """Token accounting exactly as recorded: in, out, cache read/write, reasoning."""
+    since = int(time.time()) - max(1, days) * 86400
+    return {
+        "status": "success",
+        "days": days,
+        "since": since,
+        **await asyncio.to_thread(store.token_breakdown, since),
+    }
+
+
+@app.get("/api/provider-stats")
+async def provider_stats(days: int = 7):
+    """Per-provider volume, success rate and p50/p95 latency and TTFT."""
+    since = int(time.time()) - max(1, days) * 86400
+    return {
+        "status": "success",
+        "days": days,
+        "since": since,
+        "providers": await asyncio.to_thread(store.provider_metrics, since),
+    }
+
+
 @app.get("/api/health/history")
 async def health_history(limit: int = 100):
     """Recent probes, newest first."""

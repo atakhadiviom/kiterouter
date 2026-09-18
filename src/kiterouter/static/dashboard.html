@@ -361,29 +361,186 @@
       <div id="log-detail" class="hidden bg-card border border-border rounded-xl p-5 space-y-3"></div>
     </section>
 
-    <!-- Tab: Providers -->
+    <!-- Usage — totals aggregated from recorded requests, never estimated -->
+    <section id="tab-usage" class="p-8 space-y-6 hidden">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 class="font-semibold text-base text-zinc-100">Usage</h2>
+          <p id="usage-summary" class="text-xs text-muted mt-0.5">Loading…</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <select id="usage-days" onchange="loadUsagePage()" class="bg-zinc-900 border border-border rounded-lg text-xs px-2 py-1.5 text-zinc-300">
+            <option value="1">last 24h</option>
+            <option value="7" selected>last 7 days</option>
+            <option value="30">last 30 days</option>
+          </select>
+          <button onclick="loadUsagePage()" class="px-3 py-1.5 bg-zinc-900 border border-border hover:bg-zinc-800 text-zinc-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-200">By provider</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs font-mono">
+            <thead>
+              <tr class="border-b border-border text-muted uppercase text-[10px] tracking-wider">
+                <th class="pb-3 font-medium">Provider</th>
+                <th class="pb-3 font-medium">Requests</th>
+                <th class="pb-3 font-medium">OK</th>
+                <th class="pb-3 font-medium">Tokens in</th>
+                <th class="pb-3 font-medium">Tokens out</th>
+                <th class="pb-3 font-medium">RTK saved</th>
+                <th class="pb-3 font-medium text-right">Last</th>
+              </tr>
+            </thead>
+            <tbody id="usage-rows" class="divide-y divide-border/40 text-zinc-300">
+              <tr><td colspan="7" class="py-6 text-center text-zinc-500 font-sans">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-200">Per day</h3>
+        <div id="usage-daily" class="space-y-1.5">
+          <div class="text-xs text-zinc-500 font-mono">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tokens — exactly what upstreams reported -->
+    <section id="tab-tokens" class="p-8 space-y-6 hidden">
+      <div>
+        <h2 class="font-semibold text-base text-zinc-100">Tokens</h2>
+        <p id="tokens-summary" class="text-xs text-muted mt-0.5">Loading…</p>
+      </div>
+      <div id="token-cards" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
+      <div class="bg-card border border-border rounded-xl p-4 text-xs text-muted leading-relaxed">
+        These are the values upstreams actually reported. Cache read/write and reasoning stay zero for
+        providers that do not send them, and nothing here is derived from character counts.
+      </div>
+    </section>
+
+    <!-- Provider stats — volume, success rate and latency/TTFT percentiles -->
+    <section id="tab-provider-stats" class="p-8 space-y-6 hidden">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 class="font-semibold text-base text-zinc-100">Provider stats</h2>
+          <p id="provider-stats-summary" class="text-xs text-muted mt-0.5">Loading…</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <select id="provider-stats-days" onchange="loadProviderStatsPage()" class="bg-zinc-900 border border-border rounded-lg text-xs px-2 py-1.5 text-zinc-300">
+            <option value="1">last 24h</option>
+            <option value="7" selected>last 7 days</option>
+            <option value="30">last 30 days</option>
+          </select>
+          <button onclick="loadProviderStatsPage()" class="px-3 py-1.5 bg-zinc-900 border border-border hover:bg-zinc-800 text-zinc-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs font-mono">
+            <thead>
+              <tr class="border-b border-border text-muted uppercase text-[10px] tracking-wider">
+                <th class="pb-3 font-medium">Provider</th>
+                <th class="pb-3 font-medium">Requests</th>
+                <th class="pb-3 font-medium">OK</th>
+                <th class="pb-3 font-medium">p50 latency</th>
+                <th class="pb-3 font-medium">p95 latency</th>
+                <th class="pb-3 font-medium">p50 TTFT</th>
+                <th class="pb-3 font-medium">p95 TTFT</th>
+                <th class="pb-3 font-medium">Last error</th>
+              </tr>
+            </thead>
+            <tbody id="provider-stats-rows" class="divide-y divide-border/40 text-zinc-300">
+              <tr><td colspan="8" class="py-6 text-center text-zinc-500 font-sans">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <section id="tab-providers" class="p-8 space-y-6 hidden">
       <!-- Section Header -->
       <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 class="text-base font-semibold text-zinc-100">Configured AI Providers</h2>
-          <p class="text-xs text-muted">Live upstream status, explicit source imports, and model validation. Settings persist to <code>~/.kiterouter/config.json</code>.</p>
+          <p class="text-xs text-muted">Search, test and configure every connection. Settings persist to <code>~/.kiterouter/config.json</code>.</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <button onclick="fetchAllModels()" id="btn-fetch-all" class="px-3 py-2 bg-blue-600/20 border border-blue-500/30 hover:bg-blue-600/30 text-blue-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
-            <i data-lucide="layers" class="w-3.5 h-3.5"></i> Auto-Fetch All Models
-          </button>
-          <button onclick="testAllModels()" id="btn-test-all" class="px-3 py-2 bg-amber-600/20 border border-amber-500/30 hover:bg-amber-600/30 text-amber-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5">
-            <i data-lucide="play-circle" class="w-3.5 h-3.5"></i> Test All Models
-          </button>
           <button onclick="saveAllProviders()" id="btn-save-all" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg text-xs transition flex items-center gap-1.5 shadow-lg shadow-emerald-600/20">
             <i data-lucide="save" class="w-3.5 h-3.5"></i> Save Settings
           </button>
         </div>
       </div>
 
+      <!-- Filter toolbar -->
+      <div class="bg-card border border-border rounded-xl p-4 space-y-3">
+        <div class="flex flex-col lg:flex-row gap-2.5">
+          <div class="relative flex-1">
+            <i data-lucide="search" class="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none"></i>
+            <input id="providers-search" type="text" placeholder="Search Providers" autocomplete="off"
+              oninput="onProvidersSearch(this.value)" onfocus="isUserTyping = true" onblur="isUserTyping = false"
+              class="w-full bg-zinc-900 border border-border pl-9 pr-3 py-2 rounded-lg text-xs text-zinc-200 placeholder:text-muted focus:outline-none focus:border-blue-500">
+          </div>
+          <div class="relative flex-1">
+            <i data-lucide="search-code" class="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none"></i>
+            <input id="providers-model-search" type="text" placeholder="Search by model…" autocomplete="off"
+              oninput="onProvidersModelSearch(this.value)" onfocus="isUserTyping = true" onblur="isUserTyping = false"
+              class="w-full bg-zinc-900 border border-border pl-9 pr-3 py-2 rounded-lg text-xs text-zinc-200 placeholder:text-muted focus:outline-none focus:border-blue-500">
+          </div>
+          <div id="providers-view-toggle" class="flex items-center gap-1 bg-zinc-900 border border-border rounded-lg p-1 shrink-0" role="group" aria-label="Provider list density">
+            <button id="pv-view-all" onclick="setProvidersView('all')" class="px-2.5 py-1.5 rounded-md text-xs flex items-center gap-1.5 transition" title="Show all providers">
+              <i data-lucide="layout-grid" class="w-3.5 h-3.5"></i> All
+            </button>
+            <button id="pv-view-configured" onclick="setProvidersView('configured')" class="px-2.5 py-1.5 rounded-md text-xs flex items-center gap-1.5 transition" title="Show only configured providers">
+              <i data-lucide="check" class="w-3.5 h-3.5"></i> Configured
+            </button>
+            <button id="pv-view-compact" onclick="setProvidersView('compact')" class="px-2.5 py-1.5 rounded-md text-xs flex items-center gap-1.5 transition" title="Compact card density">
+              <i data-lucide="list-filter" class="w-3.5 h-3.5"></i> Compact
+            </button>
+          </div>
+          <button onclick="fetchAllModels()" id="btn-fetch-all" class="px-3 py-2 bg-blue-600/20 border border-blue-500/30 hover:bg-blue-600/30 text-blue-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5 shrink-0">
+            <i data-lucide="layers" class="w-3.5 h-3.5"></i> Auto-Fetch All Models
+          </button>
+          <button onclick="testAllModels()" id="btn-test-all" class="px-3 py-2 bg-amber-600/20 border border-amber-500/30 hover:bg-amber-600/30 text-amber-300 font-medium rounded-lg text-xs transition flex items-center gap-1.5 shrink-0">
+            <i data-lucide="play-circle" class="w-3.5 h-3.5"></i> Test All Models
+          </button>
+        </div>
+        <div id="providers-chips" class="flex flex-wrap items-center gap-1.5"></div>
+        <div id="providers-count-line" class="text-[11px] font-mono text-muted"></div>
+      </div>
+
+      <!-- Test All Models Status Banner -->
+      <div id="test-all-banner" class="hidden text-xs p-3 rounded-lg border"></div>
+
+      <!-- Grouped provider cards -->
+      <div id="providers-container" class="space-y-6"></div>
+
+      <!-- Setup & imports: the previous top-of-page cards, moved below the grid -->
+      <div class="bg-card border border-border rounded-xl">
+        <button id="setup-toggle" type="button" onclick="toggleSetupSection()" aria-expanded="false" aria-controls="setup-body"
+                class="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-zinc-800/40 transition rounded-xl">
+          <span class="flex items-center gap-2.5">
+            <span class="w-7 h-7 rounded-lg bg-zinc-700/40 border border-border flex items-center justify-center text-zinc-300">
+              <i data-lucide="settings" class="w-4 h-4"></i>
+            </span>
+            <span>
+              <span class="block font-semibold text-xs text-zinc-100 uppercase tracking-wide">Setup &amp; imports</span>
+              <span class="block text-xs text-muted">Import credentials, catalogs, provider nodes, health probing and the Cline connection.</span>
+            </span>
+          </span>
+          <i data-lucide="chevron-down" id="setup-toggle-icon" class="w-4 h-4 text-muted transition-transform"></i>
+        </button>
+        <div id="setup-body" class="hidden px-5 pb-5 pt-1 space-y-5 border-t border-border">
+
       <!-- Explicit Imports Card -->
-      <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+      <div class="bg-zinc-900/50 border border-border/60 rounded-xl p-5 space-y-3">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2.5">
             <div class="w-7 h-7 rounded-lg bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-400">
@@ -429,7 +586,7 @@
       <div id="test-all-banner" class="hidden text-xs p-3 rounded-lg border"></div>
 
       <!-- Model catalogs: discovered, not hardcoded -->
-      <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+      <div class="bg-zinc-900/50 border border-border/60 rounded-xl p-5 space-y-3">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div class="flex items-center gap-2.5">
             <div class="w-7 h-7 rounded-lg bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
@@ -449,7 +606,7 @@
       </div>
 
       <!-- Add a provider node: provider definitions are data, not code -->
-      <div class="bg-card border border-border rounded-xl p-5 space-y-3">
+      <div class="bg-zinc-900/50 border border-border/60 rounded-xl p-5 space-y-3">
         <div class="flex items-center gap-2.5">
           <div class="w-7 h-7 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
             <i data-lucide="plug" class="w-4 h-4"></i>
@@ -492,7 +649,7 @@
       </div>
 
       <!-- Background Health Probing -->
-      <div class="bg-card border border-border rounded-xl p-5 space-y-4">
+      <div class="bg-zinc-900/50 border border-border/60 rounded-xl p-5 space-y-4">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div class="flex items-center gap-2.5">
             <div class="w-7 h-7 rounded-lg bg-cyan-600/20 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
@@ -524,7 +681,7 @@
       </div>
 
       <!-- Cline Connection -->
-      <div id="cline-auth-card" class="bg-card border border-border rounded-xl p-5 space-y-3">
+      <div id="cline-auth-card" class="bg-zinc-900/50 border border-border/60 rounded-xl p-5 space-y-3">
         <div class="flex items-center gap-2.5">
           <div class="w-7 h-7 rounded-lg bg-orange-600/20 border border-orange-500/30 flex items-center justify-center text-orange-400">
             <i data-lucide="plug-zap" class="w-4 h-4"></i>
@@ -555,8 +712,7 @@
         </div>
       </div>
 
-      <div id="providers-container" class="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <!-- Injected via JavaScript -->
+        </div>
       </div>
     </section>
 
@@ -1150,10 +1306,7 @@ print(res.choices[0].message.content)</pre>
         checklist:['capture per-request cost where the upstream reports it','roll up daily','flag free-tier vs paid usage','tests + wiki sync'] },
       { id:'health', label:'Health', icon:'heart-pulse', group:'Observability', status:'live' },
       { id:'logs', label:'Logs', icon:'scroll-text', group:'Observability', status:'live' },
-      { id:'provider-stats', label:'Provider Stats', icon:'chart-line', group:'Observability', status:'planned',
-        summary:'Per-provider success rate, latency percentiles and error mix over time.',
-        reference:'OmniRoute /api/provider-stats and /api/provider-metrics',
-        checklist:['aggregate per provider from persisted requests','show p50/p95 latency and error breakdown','compare providers side by side','tests + wiki sync'] },
+      { id:'provider-stats', label:'Provider Stats', icon:'chart-line', group:'Observability', status:'live' },
       { id:'runtime', label:'Runtime', icon:'server', group:'Observability', status:'planned',
         summary:'Live process and runtime state of the gateway itself.',
         reference:'OmniRoute /dashboard/runtime',
@@ -1162,14 +1315,8 @@ print(res.choices[0].message.content)</pre>
         summary:'Host and storage view — disk used by config and logs, database size, update status.',
         reference:'OmniRoute /dashboard/system and version_manager',
         checklist:['report storage growth per file','show update availability','warn on oversized state','tests + wiki sync'] },
-      { id:'tokens', label:'Tokens', icon:'coins', group:'Observability', status:'planned',
-        summary:'Token accounting split into input, output, cache read, cache write and reasoning.',
-        reference:'OmniRoute usage_history token columns and token_ledger; call_logs.tokens_cache_read/creation/reasoning',
-        checklist:['capture the token breakdown per response','separate estimated from reported counts','show savings attribution','tests + wiki sync'] },
-      { id:'usage', label:'Usage', icon:'trending-up', group:'Observability', status:'planned',
-        summary:'Requests and tokens over time by provider, model and key.',
-        reference:'OmniRoute usage_history (52,981 rows), daily_usage_summary, hourly_usage_summary',
-        checklist:['decide the persistence layer first (see plan Wave 0)','aggregate daily and hourly','break down by provider and model','tests + wiki sync'] },
+      { id:'tokens', label:'Tokens', icon:'coins', group:'Observability', status:'live' },
+      { id:'usage', label:'Usage', icon:'trending-up', group:'Observability', status:'live' },
 
       // Context & Compression
       { id:'cache', label:'Cache', icon:'database-zap', group:'Context & Compression', status:'planned',
@@ -3956,6 +4103,137 @@ print(res.choices[0].message.content)</pre>
         if (meta) meta.innerText = `${latencyMs}ms · failed`;
         out.className = 'bg-rose-950/60 border border-rose-500/40 p-4 rounded-lg text-xs font-mono text-rose-300 min-h-[100px] whitespace-pre-wrap';
         out.innerText = 'Error: ' + e;
+      }
+    }
+
+    // ── Usage / Tokens / Provider stats (store-backed) ─────────────────────
+    // formatMs already exists (health page) and is reused here.
+
+    function windowLabel(days) {
+      return days === 1 ? 'last 24h' : `last ${days} days`;
+    }
+
+    function renderStatRows(tbodyId, columns, rows, emptyMessage) {
+      const tbody = document.getElementById(tbodyId);
+      if (!tbody) return;
+      if (!rows || !rows.length) {
+        tbody.innerHTML = `<tr><td colspan="${columns.length}" class="py-6 text-center text-zinc-500 font-sans">${emptyMessage}</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = rows.map(row =>
+        '<tr class="hover:bg-zinc-800/40">' +
+        columns.map(col => {
+          const raw = col.get(row);
+          const value = (raw === null || raw === undefined || raw === '') ? '—' : raw;
+          return `<td class="py-2.5 ${col.cls || 'text-zinc-400'}">${value}</td>`;
+        }).join('') +
+        '</tr>'
+      ).join('');
+    }
+
+    async function loadUsagePage() {
+      const days = Number(document.getElementById('usage-days')?.value || 7);
+      const summaryEl = document.getElementById('usage-summary');
+      try {
+        const res = await fetch(`/api/usage?days=${days}&group_by=provider`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const totals = data.totals || {};
+
+        if (summaryEl) {
+          summaryEl.innerText =
+            `${totals.total || 0} requests · ${totals.ok_rate_pct || 0}% ok · ` +
+            `${(totals.tokens_in || 0) + (totals.tokens_out || 0)} tokens (${windowLabel(days)})`;
+        }
+
+        renderStatRows('usage-rows', [
+          { get: r => escapeHtml(r.key), cls: 'text-zinc-200' },
+          { get: r => r.requests },
+          { get: r => `${r.ok_rate_pct}%`, cls: 'text-emerald-400' },
+          { get: r => formatK(r.tokens_in) },
+          { get: r => formatK(r.tokens_out) },
+          { get: r => formatK(r.rtk_saved) },
+          { get: r => (r.last_at ? formatRelativeTime(r.last_at) : '—'), cls: 'text-muted text-right' },
+        ], data.groups || [], 'No requests recorded in this window.');
+
+        const dailyEl = document.getElementById('usage-daily');
+        if (dailyEl) {
+          const days_ = data.daily || [];
+          dailyEl.innerHTML = days_.length
+            ? days_.map(d => `<div class="flex items-center justify-between gap-3 text-xs py-1.5 border-t border-border/60">
+                 <span class="text-zinc-300 font-mono">${escapeHtml(d.day)}</span>
+                 <span class="text-muted font-mono">${d.requests} req · ${d.ok} ok · ${formatK(d.tokens_in)}↑ ${formatK(d.tokens_out)}↓</span>
+               </div>`).join('')
+            : '<div class="text-xs text-zinc-500 font-mono">Nothing recorded yet.</div>';
+        }
+      } catch (e) {
+        if (summaryEl) summaryEl.innerHTML = `<span class="text-rose-400">Could not load usage: ${escapeHtml(String(e.message || e))}</span>`;
+      }
+    }
+
+    async function loadTokensPage() {
+      const summaryEl = document.getElementById('tokens-summary');
+      const cardsEl = document.getElementById('token-cards');
+      try {
+        const res = await fetch('/api/tokens?days=7');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const t = await res.json();
+
+        if (summaryEl) {
+          summaryEl.innerText = `${t.requests || 0} requests · ${(t.tokens_total || 0).toLocaleString()} tokens total (last 7 days)`;
+        }
+        if (cardsEl) {
+          const cards = [
+            { label: 'Input', value: t.tokens_in, note: 'prompt tokens reported' },
+            { label: 'Output', value: t.tokens_out, note: 'completion tokens reported' },
+            { label: 'Cache read', value: t.tokens_cache_read, note: 'prompt-cache hits' },
+            { label: 'Cache write', value: t.tokens_cache_write, note: 'cache creation' },
+            { label: 'Reasoning', value: t.tokens_reasoning, note: 'thinking tokens' },
+            { label: 'RTK saved', value: t.rtk_saved, note: 'compression savings' },
+            { label: 'Total', value: t.tokens_total, note: 'input + output' },
+            { label: 'Requests', value: t.requests, note: 'last 7 days' },
+          ];
+          cardsEl.innerHTML = cards.map(c => `
+            <div class="bg-card border border-border p-4 rounded-xl">
+              <div class="text-[10px] font-medium text-muted uppercase tracking-wider">${c.label}</div>
+              <div class="text-xl font-bold mt-1.5 text-zinc-100">${(c.value || 0).toLocaleString()}</div>
+              <div class="text-[11px] text-muted mt-0.5">${c.note}</div>
+            </div>`).join('');
+        }
+      } catch (e) {
+        if (summaryEl) summaryEl.innerHTML = `<span class="text-rose-400">Could not load tokens: ${escapeHtml(String(e.message || e))}</span>`;
+      }
+    }
+
+    async function loadProviderStatsPage() {
+      const days = Number(document.getElementById('provider-stats-days')?.value || 7);
+      const summaryEl = document.getElementById('provider-stats-summary');
+      try {
+        const res = await fetch(`/api/provider-stats?days=${days}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const rows = data.providers || [];
+
+        if (summaryEl) {
+          const serving = rows.filter(r => r.ok_rate_pct > 0).length;
+          summaryEl.innerText = `${rows.length} providers seen · ${serving} served at least one success (${windowLabel(days)})`;
+        }
+
+        renderStatRows('provider-stats-rows', [
+          { get: r => escapeHtml(r.provider), cls: 'text-zinc-200' },
+          { get: r => r.requests },
+          { get: r => `${r.ok_rate_pct}%`, cls: 'text-emerald-400' },
+          { get: r => formatMs(r.p50_latency_ms) },
+          { get: r => formatMs(r.p95_latency_ms) },
+          { get: r => r.ttft_samples ? formatMs(r.p50_ttft_ms) : '—' },
+          { get: r => r.ttft_samples ? formatMs(r.p95_ttft_ms) : '—' },
+          {
+            get: r => r.last_error ? `<span class="text-rose-400">${escapeHtml(String(r.last_error).slice(0, 60))}</span>` : '<span class="text-emerald-400">ok</span>',
+            cls: 'truncate max-w-[240px]',
+          },
+        ], rows, 'No requests recorded in this window.');
+      } catch (e) {
+        if (summaryEl) summaryEl.innerHTML = `<span class="text-rose-400">Could not load provider stats: ${escapeHtml(String(e.message || e))}</span>`;
       }
     }
 

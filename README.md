@@ -33,6 +33,10 @@ KiteRouter's port is hard-locked to **3001** in the code so it can never collide
 | `/api/fetch-models`, `/api/fetch-all-models` | POST | Fetch live model catalogs per provider / all providers |
 | `/api/test-provider`, `/api/test-model`, `/api/test-all-models` | POST | **Real** live completion tests — honest pass/fail, errors surfaced as errors |
 | `/api/recent-requests` | GET | Recent request log for the dashboard |
+| `/api/logs`, `/api/logs/{id}` | GET | Durable request history from SQLite, with body artifacts |
+| `/api/usage`, `/api/tokens` | GET | Recorded request/token totals over a window, grouped by provider, model or combo |
+| `/api/provider-stats` | GET | Per-provider volume, success rate and p50/p95 latency **and TTFT** |
+| `/api/store` | GET | Database and WAL size, retention, last vacuum |
 | `/health` | GET | Health check |
 
 ## Providers
